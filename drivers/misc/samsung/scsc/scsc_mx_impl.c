@@ -45,7 +45,7 @@ struct scsc_mx *scsc_mx_create(struct scsc_mif_abs *mif)
 {
 	struct scsc_mx *mx;
 
-	mx = kzalloc(sizeof(*mx), GFP_ATOMIC);
+	mx = kzalloc(sizeof(*mx), GFP_KERNEL);
 	if (!mx)
 		return NULL;
 
@@ -54,7 +54,6 @@ struct scsc_mx *scsc_mx_create(struct scsc_mif_abs *mif)
 	mifintrbit_init(&mx->intr, mif);
 
 	mifmboxman_init(&mx->mbox);
-	panicmon_init(&mx->panicmon, mx);
 	suspendmon_init(&mx->suspendmon, mx);
 	mxman_init(&mx->mxman, mx);
 	srvman_init(&mx->srvman, mx);
@@ -70,7 +69,6 @@ void scsc_mx_destroy(struct scsc_mx *mx)
 	mifintrbit_deinit(&mx->intr);
 	mifmboxman_deinit(scsc_mx_get_mboxman(mx));
 	suspendmon_deinit(scsc_mx_get_suspendmon(mx));
-	panicmon_deinit(scsc_mx_get_panicmon(mx));
 	mifproc_remove_proc_dir();
 	srvman_deinit(&mx->srvman);
 	mxman_deinit(&mx->mxman);

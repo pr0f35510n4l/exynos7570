@@ -105,7 +105,13 @@ int fimc_is_hw_tpu_init(struct fimc_is_hw_ip *hw_ip, struct fimc_is_group *group
 	instance = group->instance;
 
 	if (!hw_tpu->lib_func) {
+#ifdef ENABLE_FPSIMD_FOR_USER
+		fpsimd_get();
 		ret = get_lib_func(LIB_FUNC_TPU, (void **)&hw_tpu->lib_func);
+		fpsimd_put();
+#else
+		ret = get_lib_func(LIB_FUNC_TPU, (void **)&hw_tpu->lib_func);
+#endif
 		dbg_hw("lib_interface_func is set (%d)\n", hw_ip->id);
 	}
 

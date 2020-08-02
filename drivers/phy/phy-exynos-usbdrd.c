@@ -524,271 +524,113 @@ exynos_usbdrd_utmi_set_refclk(struct phy_usb_instance *inst)
  */
 
 static void exynos_usbdrd_fill_hstune(struct exynos_usbdrd_phy *phy_drd,
-							struct device_node *node)
+				struct exynos_usbphy_hs_tune *hs_tune)
 {
-	struct device *dev = phy_drd->dev;
-	struct exynos_usbphy_hs_tune *hs_tune = phy_drd->hs_value;
-	int ret;
-	u32 res[2];
-	u32 value;
-
-	if ( node == NULL)
-		return;
-
-	ret = of_property_read_u32_array(node, "tx_vref", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].tx_vref = res[0];
-		hs_tune[1].tx_vref = res[1];
-	} else {
-		dev_err(dev, "can't get tx_vref value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_pre_emp", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].tx_pre_emp = res[0];
-		hs_tune[1].tx_pre_emp = res[1];
-	} else {
-		dev_err(dev, "can't get tx_pre_emp value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_pre_emp_puls", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].tx_pre_emp_puls = res[0];
-		hs_tune[1].tx_pre_emp_puls = res[1];
-	} else {
-		dev_err(dev, "can't get tx_pre_emp_puls value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_res", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].tx_res = res[0];
-		hs_tune[1].tx_res = res[1];
-	} else {
-		dev_err(dev, "can't get tx_res value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_rise", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].tx_rise = res[0];
-		hs_tune[1].tx_rise = res[1];
-	} else {
-		dev_err(dev, "can't get tx_rise value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_hsxv", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].tx_hsxv = res[0];
-		hs_tune[1].tx_hsxv = res[1];
-	} else {
-		dev_err(dev, "can't get tx_hsxv value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_fsls", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].tx_fsls = res[0];
-		hs_tune[1].tx_fsls = res[1];
-	} else {
-		dev_err(dev, "can't get tx_fsls value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "rx_sqrx", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].rx_sqrx = res[0];
-		hs_tune[1].rx_sqrx = res[1];
-	} else {
-		dev_err(dev, "can't get tx_sqrx value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "compdis", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].compdis = res[0];
-		hs_tune[1].compdis = res[1];
-	} else {
-		dev_err(dev, "can't get compdis value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "otg", res, 2);
-	if ( ret == 0 ) {
-		hs_tune[0].otg = res[0];
-		hs_tune[1].otg = res[1];
-	} else {
-		dev_err(dev, "can't get otg_tune value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "enable_user_imp", res, 2);
-	if ( ret == 0 ) {
-		if ( res[0] ) {
-			hs_tune[0].enable_user_imp = true;
-			hs_tune[1].enable_user_imp = true;
-			hs_tune[0].user_imp_value = res[1];
-			hs_tune[1].user_imp_value = res[1];
-		} else {
-			hs_tune[0].enable_user_imp = false;
-			hs_tune[1].enable_user_imp = false;
+	switch (phy_drd->drv_data->cpu_type) {
+	case TYPE_EXYNOS8890:
+		if (phy_drd->drv_data->ip_type == TYPE_USB3DRD) {
+			hs_tune->tx_vref	 = 0x3;
+			hs_tune->tx_pre_emp	 = 0x2;
+			hs_tune->tx_pre_emp_puls = 0x0;
+			hs_tune->tx_res		 = 0x2;
+			hs_tune->tx_rise	 = 0x3;
+			hs_tune->tx_hsxv	 = 0x0;
+			hs_tune->tx_fsls	 = 0x3;
+			hs_tune->rx_sqrx	 = 0x7;
+			hs_tune->compdis	 = 0x0;
+			hs_tune->otg		 = 0x4;
+			hs_tune->enable_user_imp = false;
+			hs_tune->utmi_clk	 = USBPHY_UTMI_PHYCLOCK;
 		}
-	} else {
-		dev_err(dev, "can't get enable_user_imp value, error = %d\n",ret);
+		break;
+	case TYPE_EXYNOS7570:		
+			hs_tune->tx_vref	 = 0x3;
+			hs_tune->tx_pre_emp	 = 0x0;
+			hs_tune->tx_pre_emp_puls = 0x0;
+			hs_tune->tx_res		 = 0x2;
+			hs_tune->tx_rise	 = 0x1;
+			hs_tune->tx_hsxv	 = 0x0;
+			hs_tune->tx_fsls	 = 0x3;
+			hs_tune->rx_sqrx	 = 0x5;
+			hs_tune->compdis	 = 0x3;
+			hs_tune->otg		 = 0x2;
+			hs_tune->enable_user_imp = false;
+			hs_tune->utmi_clk	 = USBPHY_UTMI_PHYCLOCK;
+		
+		break;
+		
+	default:
+		break;
 	}
-
-	ret = of_property_read_u32(node, "is_phyclock", &value);
-	if ( ret == 0 ) {
-		if ( value == 1) {
-			hs_tune[0].utmi_clk = USBPHY_UTMI_PHYCLOCK;
-			hs_tune[1].utmi_clk = USBPHY_UTMI_PHYCLOCK;
-		} else {
-			hs_tune[0].utmi_clk = USBPHY_UTMI_FREECLOCK;
-			hs_tune[1].utmi_clk = USBPHY_UTMI_FREECLOCK;
-		}
-	} else {
-		dev_err(dev, "can't get is_phyclock value, error = %d\n",ret);
-	}
-
-	return;
 }
 
+static void exynos_usbdrd_set_hstune(struct exynos_usbdrd_phy *phy_drd,
+				enum exynos_usbphy_mode phy_mode)
+{
+	struct exynos_usbphy_hs_tune *hs_tune = phy_drd->usbphy_info.hs_tune;
+
+	printk("usb: exynos_usbdrd_set_hstune \n" );
+
+	if (phy_mode == USBPHY_MODE_DEV) {
+		switch (phy_drd->drv_data->cpu_type) {	
+			case TYPE_EXYNOS7570:	
+				hs_tune->tx_vref	 = 0xe;
+				hs_tune->rx_sqrx	 = 0x6;
+				hs_tune->tx_pre_emp =0x2; 
+				break;			
+			default:
+				break;				
+			}
+		
+	} else { /* USBPHY_MODE_HOST */
+		switch (phy_drd->drv_data->cpu_type) {
+		case TYPE_EXYNOS8890:
+			if (phy_drd->drv_data->ip_type == TYPE_USB3DRD) {
+				hs_tune->tx_vref	= 0x1;
+				hs_tune->tx_pre_emp	= 0x0;
+				hs_tune->compdis	= 0x7;
+			}
+			break;
+		default:
+			break;
+		}
+
+	}
+}
 
 /*
  * Sets the default PHY tuning values for super-speed connection.
  */
 static void exynos_usbdrd_fill_sstune(struct exynos_usbdrd_phy *phy_drd,
-							struct device_node *node)
+				struct exynos_usbphy_ss_tune *ss_tune)
 {
-	struct device *dev = phy_drd->dev;
-	struct exynos_usbphy_ss_tune *ss_tune = phy_drd->ss_value;
-	u32 res[2];
-	int ret;
-
-	if ( node == NULL)
-		return;
-
-	ret = of_property_read_u32_array(node, "tx_boost_level", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].tx_boost_level = res[0];
-		ss_tune[1].tx_boost_level = res[1];
-	} else {
-		dev_err(dev, "can't get tx_boost_level value, error = %d \n",ret);
+	switch (phy_drd->drv_data->cpu_type) {
+	case TYPE_EXYNOS8890:
+		if (phy_drd->drv_data->ip_type == TYPE_USB3DRD) {
+			ss_tune->tx_boost_level	= 0x4;
+			ss_tune->tx_swing_level	= 0x1;
+			ss_tune->tx_swing_full	= 0x7F;
+			ss_tune->tx_swing_low	= 0x7F;
+			ss_tune->tx_deemphasis_mode	= 0x1;
+			ss_tune->tx_deemphasis_3p5db	= 0x18;
+			ss_tune->tx_deemphasis_6db	= 0x18;
+			ss_tune->enable_ssc	= 0x1; /* TRUE */
+			ss_tune->ssc_range	= 0x0;
+			ss_tune->los_bias	= 0x5;
+			ss_tune->los_mask_val	= 0x104;
+			ss_tune->enable_fixed_rxeq_mode	= 0x0;
+			ss_tune->fix_rxeq_value	= 0x4;
+		}
+		break;
+	default:
+		break;
 	}
-
-	ret = of_property_read_u32_array(node, "tx_swing_level", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].tx_swing_level = res[0];
-		ss_tune[1].tx_swing_level = res[1];
-	} else {
-		dev_err(dev, "can't get tx_swing_level value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_swing_full", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].tx_swing_full = res[0];
-		ss_tune[1].tx_swing_full = res[1];
-	} else {
-		dev_err(dev, "can't get tx_swing_full value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_swing_low", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].tx_swing_low = res[0];
-		ss_tune[1].tx_swing_low = res[1];
-	} else {
-		dev_err(dev, "can't get tx_swing_low value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_deemphasis_mode", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].tx_deemphasis_mode = res[0];
-		ss_tune[1].tx_deemphasis_mode = res[1];
-	} else {
-		dev_err(dev, "can't get tx_deemphasis_mode value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_deemphasis_3p5db", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].tx_deemphasis_3p5db = res[0];
-		ss_tune[1].tx_deemphasis_3p5db = res[1];
-	} else {
-		dev_err(dev, "can't get tx_deemphasis_3p5db value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "tx_deemphasis_6db", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].tx_deemphasis_6db = res[0];
-		ss_tune[1].tx_deemphasis_6db = res[1];
-	} else {
-		dev_err(dev, "can't get tx_deemphasis_6db value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "enable_ssc", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].enable_ssc = res[0];
-		ss_tune[1].enable_ssc = res[1];
-	} else {
-		dev_err(dev, "can't get enable_ssc value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "ssc_range", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].ssc_range = res[0];
-		ss_tune[1].ssc_range = res[1];
-	} else {
-		dev_err(dev, "can't get ssc_range value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "los_bias", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].los_bias = res[0];
-		ss_tune[1].los_bias = res[1];
-	} else {
-		dev_err(dev, "can't get los_bias value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "los_mask_val", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].los_mask_val = res[0];
-		ss_tune[1].los_mask_val = res[1];
-	} else {
-		dev_err(dev, "can't get los_mask_val value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "enable_fixed_rxeq_mode", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].enable_fixed_rxeq_mode = res[0];
-		ss_tune[1].enable_fixed_rxeq_mode = res[1];
-	} else {
-		dev_err(dev, "can't get enable_fixed_rxeq_mode value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "fix_rxeq_value", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].fix_rxeq_value = res[0];
-		ss_tune[1].fix_rxeq_value = res[1];
-	} else {
-		dev_err(dev, "can't get fix_rxeq_value value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "set_crport_level_en", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].set_crport_level_en = res[0];
-		ss_tune[1].set_crport_level_en = res[1];
-	} else {
-		dev_err(dev, "can't get set_crport_level_en value, error = %d \n",ret);
-	}
-
-	ret = of_property_read_u32_array(node, "set_crport_mpll_charge_pump", res, 2);
-	if ( ret == 0 ) {
-		ss_tune[0].set_crport_mpll_charge_pump = res[0];
-		ss_tune[1].set_crport_mpll_charge_pump = res[1];
-	} else {
-		dev_err(dev, "can't get set_crport_mpll_charge_pump value, error = %d \n",ret);
-	}
-
-	return;
 }
 
 static int exynos_usbdrd_get_phyinfo(struct exynos_usbdrd_phy *phy_drd)
 {
 	struct device *dev = phy_drd->dev;
 	struct device_node *node = dev->of_node;
-	struct device_node *tune_node;
 
 	switch (phy_drd->drv_data->cpu_type) {
 	case TYPE_EXYNOS8890:
@@ -821,37 +663,44 @@ static int exynos_usbdrd_get_phyinfo(struct exynos_usbdrd_phy *phy_drd)
 	phy_drd->usbphy_info.regs_base = phy_drd->reg_phy;
 	phy_drd->usbphy_info.not_used_vbus_pad = of_property_read_bool(node,
 							"is_not_vbus_pad");
+	phy_drd->use_additional_tuning = of_property_read_bool(node,
+						"use_additional_tuning");
 
-	tune_node = of_parse_phandle(dev->of_node, "ss_tune_info",0);
-	if (tune_node == NULL) {
-		dev_info(dev, "don't need usbphy tuning value for super speed\n");
-	} else if (of_device_is_available(tune_node)) {
-		phy_drd->usbphy_info.ss_tune = devm_kmalloc(phy_drd->dev,
-				sizeof(struct exynos_usbphy_ss_tune), GFP_KERNEL);
-		if (!phy_drd->usbphy_info.ss_tune) {
-			dev_err(phy_drd->dev, "%s: failed to alloc for ss tune\n",
-					__func__);
-			return -ENOMEM;
-		}
-
-		exynos_usbdrd_fill_sstune(phy_drd, tune_node);
-	}
-
-	tune_node = of_parse_phandle(dev->of_node, "hs_tune_info",0);
-	if (tune_node == NULL) {
-		dev_info(dev, "don't need usbphy tuning value for high speed\n");
+	if (phy_drd->drv_data->cpu_type == TYPE_EXYNOS8890 &&
+		phy_drd->drv_data->ip_type == TYPE_USB2HOST) {
+		phy_drd->usbphy_info.ss_tune = NULL;
+		phy_drd->usbphy_info.hs_tune = NULL;
 		goto done;
-	}else if (of_device_is_available(tune_node)) {
-		phy_drd->usbphy_info.hs_tune = devm_kmalloc(phy_drd->dev,
-				sizeof(struct exynos_usbphy_hs_tune), GFP_KERNEL);
-		if (!phy_drd->usbphy_info.hs_tune) {
-			dev_err(phy_drd->dev, "%s: failed to alloc for hs tune\n",
-					__func__);
-			return -ENOMEM;
-		}
-
-		exynos_usbdrd_fill_hstune(phy_drd, tune_node);
 	}
+
+	/*
+	if (phy_drd->drv_data->cpu_type == TYPE_EXYNOS7870 ||
+		phy_drd->drv_data->cpu_type == TYPE_EXYNOS7570) {
+		phy_drd->usbphy_info.ss_tune = NULL;
+		phy_drd->usbphy_info.hs_tune = NULL;
+		goto done;
+	}
+	*/
+
+	phy_drd->usbphy_info.hs_tune = devm_kmalloc(phy_drd->dev,
+			sizeof(struct exynos_usbphy_hs_tune), GFP_KERNEL);
+	if (!phy_drd->usbphy_info.hs_tune) {
+		dev_err(phy_drd->dev, "%s: failed to alloc for hs tune\n",
+								__func__);
+		return -ENOMEM;
+	}
+
+	phy_drd->usbphy_info.ss_tune = devm_kmalloc(phy_drd->dev,
+			sizeof(struct exynos_usbphy_ss_tune), GFP_KERNEL);
+	if (!phy_drd->usbphy_info.ss_tune) {
+		dev_err(phy_drd->dev, "%s: failed to alloc for ss tune\n",
+				__func__);
+
+		return -ENOMEM;
+	}
+
+	exynos_usbdrd_fill_hstune(phy_drd, phy_drd->usbphy_info.hs_tune);
+	exynos_usbdrd_fill_sstune(phy_drd, phy_drd->usbphy_info.ss_tune);
 
 done:
 	dev_info(phy_drd->dev, "usbphy info: version:0x%x, refclk:0x%x\n",
@@ -942,19 +791,18 @@ static int exynos_usbdrd_phy_exit(struct phy *phy)
 static void exynos_usbdrd_pipe3_tune(struct exynos_usbdrd_phy *phy_drd,
 							int phy_state)
 {
-	struct exynos_usbphy_ss_tune *ss_value = phy_drd->ss_value;
-	struct exynos_usbphy_hs_tune *hs_value = phy_drd->hs_value;
+	exynos_usbdrd_fill_hstune(phy_drd, phy_drd->usbphy_info.hs_tune);
 
 	if (phy_state >= OTG_STATE_A_IDLE) {
 		/* for host mode */
-		phy_drd->usbphy_info.ss_tune = &ss_value[USBPHY_MODE_HOST];
-		phy_drd->usbphy_info.hs_tune = &hs_value[USBPHY_MODE_HOST];
+		if (phy_drd->use_additional_tuning)
+			exynos_usbdrd_set_hstune(phy_drd, USBPHY_MODE_HOST);
 
 		samsung_exynos_cal_usb3phy_tune_host(&phy_drd->usbphy_info);
 	} else {
 		/* for device mode */
-		phy_drd->usbphy_info.ss_tune = &ss_value[USBPHY_MODE_DEV];
-		phy_drd->usbphy_info.hs_tune = &hs_value[USBPHY_MODE_DEV];
+		if (phy_drd->use_additional_tuning)
+			exynos_usbdrd_set_hstune(phy_drd, USBPHY_MODE_DEV);
 
 		samsung_exynos_cal_usb3phy_tune_dev(&phy_drd->usbphy_info);
 	}
@@ -963,6 +811,21 @@ static void exynos_usbdrd_pipe3_tune(struct exynos_usbdrd_phy *phy_drd,
 static void exynos_usbdrd_utmi_tune(struct exynos_usbdrd_phy *phy_drd,
 							int phy_state)
 {
+	exynos_usbdrd_fill_hstune(phy_drd, phy_drd->usbphy_info.hs_tune);
+
+	if (phy_state >= OTG_STATE_A_IDLE) {
+		/* for host mode */
+		if (phy_drd->use_additional_tuning)
+			exynos_usbdrd_set_hstune(phy_drd, USBPHY_MODE_HOST);
+
+		samsung_exynos_cal_usb3phy_tune_host(&phy_drd->usbphy_info);
+	} else {
+		/* for device mode */
+		if (phy_drd->use_additional_tuning)
+			exynos_usbdrd_set_hstune(phy_drd, USBPHY_MODE_DEV);
+
+		samsung_exynos_cal_usb3phy_tune_dev(&phy_drd->usbphy_info);
+	}
 	return;
 }
 

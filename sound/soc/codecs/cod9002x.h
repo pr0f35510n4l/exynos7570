@@ -38,6 +38,14 @@ struct cod9002x_jack_det {
 	int adc_val;
 };
 
+struct cod9002x_water_det {
+	int water_det;
+	int gdet_adc_val;
+	bool jack_det_bypass;
+	bool jack_det;
+	int wrong_jack_cnt;
+};
+
 struct jack_buttons_zone {
 	unsigned int code;
 	unsigned int adc_low;
@@ -63,7 +71,9 @@ struct cod9002x_priv {
 	bool is_suspend;
 	bool is_probe_done;
 	struct cod9002x_jack_det jack_det;
+	struct cod9002x_water_det water_det;
 	struct mutex jackdet_lock;
+	struct mutex waterdet_lock;
 	struct switch_dev sdev;
 	struct completion initialize_complete;
 	int irq_val[4];
@@ -83,16 +93,33 @@ struct cod9002x_priv {
 	bool use_external_jd;
 	int vol_hpl;
 	int vol_hpr;
+	int dnc_hp_vol;
 	int mic_adc_range;
 	int mic_det_delay;
 	int btn_release_value;
+	int btn_press_delay;
+	int water_threshold_adc_min1;
+	int water_threshold_adc_min2;
 	struct jack_buttons_zone jack_buttons_zones[4];
 	struct delayed_work buttons_work;
 	struct workqueue_struct *buttons_wq;
 	struct iio_channel *jack_adc;
 	unsigned int use_btn_adc_mode;
+	unsigned int use_det_gdet_adc_mode;
+	unsigned int dis_det_surge_mode;
+	unsigned int use_jack_pullup_mode;
 	struct delayed_work jack_det_work;
 	struct workqueue_struct *jack_det_wq;
+	struct delayed_work jack_det_adc_work;
+	struct workqueue_struct *jack_det_adc_wq;
+	struct work_struct adc_mute_work;
+	struct mutex adc_mute_lock;
+	struct workqueue_struct *adc_mute_wq;
+	struct delayed_work water_det_adc_work;
+	struct workqueue_struct *water_det_adc_wq;
+	struct delayed_work water_det_polling_work;
+	struct workqueue_struct *water_det_polling_wq;
+	int adc_pin;
 };
 
 /*
@@ -107,16 +134,11 @@ struct cod9002x_priv {
 #define COD9002X_01_IRQ1PEND			0x01
 #define COD9002X_02_IRQ2PEND			0x02
 #define COD9002X_03_IRQ3PEND			0x03
-#define COD9002X_04_IRQ4PEND			0x04
-#define COD9002X_05_IRQ5PEND			0x05
-#define COD9002X_06_IRQ1M			0x06
-#define COD9002X_07_IRQ2M			0x07
-#define COD9002X_08_IRQ3M			0x08
-#define COD9002X_09_IRQ4M			0x09
-#define COD9002X_0A_IRQ5M			0x0A
-#define COD9002X_0B_STATUS1			0x0B
-#define COD9002X_0C_STATUS2			0x0C
-#define COD9002X_0D_STATUS3			0x0D
+#define COD9002X_04_IRQ1M			0x04
+#define COD9002X_05_IRQ2M			0x05
+#define COD9002X_06_IRQ3M			0x06
+#define COD9002X_07_STATUS1			0x07
+#define COD9002X_08_STATUS2			0x08
 
 #define COD9002X_10_PD_REF			0x10
 #define COD9002X_11_PD_AD1			0x11
@@ -127,7 +149,7 @@ struct cod9002x_priv {
 #define COD9002X_16_PWAUTO_AD			0x16
 #define COD9002X_17_PWAUTO_DA			0x17
 #define COD9002X_18_CTRL_REF			0x18
-#define COD9002X_19_ZCD_AD			0x19
+#define COD9002X_19_SV_HP			0x19
 #define COD9002X_1A_ZCD_DA			0x1a
 #define COD9002X_1B_ZCD				0x1b
 #define COD9002X_1C_SV_DA			0x1c
@@ -136,9 +158,16 @@ struct cod9002x_priv {
 #define COD9002X_21_VOL_AD2			0x21
 #define COD9002X_22_VOL_AD3			0x22
 #define COD9002X_23_MIX_AD1			0x23
-#define COD9002X_24_MIX_AD2			0x23
-#define COD9002X_25_VOL_AD4			0x23
-#define COD9002X_26_DSM_ADS			0x24
+#define COD9002X_24_RESERVED		0x24
+#define COD9002X_25_RESERVED		0x25
+#define COD9002X_26_DSM_ADS			0x26
+#define COD9002X_27_VOL_TDMA1         0x27
+#define COD9002X_28_VOL_TDMA2         0x28
+#define COD9002X_29_VOL_TDMA3         0x29
+#define COD9002X_2A_VOL_TDMA4         0x2a
+#define COD9002X_2B_VOL_TDMA5         0x2b
+#define COD9002X_2C_VOL_TDMA6      	  0x2c
+#define COD9002X_2D_VOL_TDMA7         0x2d
 
 #define COD9002X_30_VOL_HPL			0x30
 #define COD9002X_31_VOL_HPR			0x31
@@ -156,6 +185,7 @@ struct cod9002x_priv {
 #define COD9002X_42_ADC1			0x42
 #define COD9002X_43_ADC_L_VOL			0x43
 #define COD9002X_44_ADC_R_VOL			0x44
+#define COD9002X_45_DMIX_AD           0x45
 
 #define COD9002X_50_DAC1			0x50
 #define COD9002X_51_DAC_L_VOL			0x51
@@ -176,7 +206,7 @@ struct cod9002x_priv {
 
 #define COD9002X_60_OFFSET1			0x60
 #define COD9002X_61_RESERVED			0x61
-#define COD9002X_62_IRQ_R			0x62
+#define COD9002X_62_STATUS3			0x62
 
 #define COD9002X_70_CLK1_AD			0x70
 #define COD9002X_71_CLK1_DA			0x71
@@ -185,196 +215,162 @@ struct cod9002x_priv {
 #define COD9002X_74_TEST			0x74
 #define COD9002X_75_CHOP_AD			0x75
 #define COD9002X_76_CHOP_DA			0x76
-#define COD9002X_77_CTRL_CP			0x77
+#define COD9002X_77_RESERVED		0x77
 #define COD9002X_78_DSM_AD			0x78
 #define COD9002X_79_SL_DA1			0x79
 #define COD9002X_7A_SL_DA2			0x7a
 
 #define COD9002X_80_DET_PDB			0x80
-#define COD9002X_81_DET_ON			0x81
+#define COD9002X_81_TEST_MODE			0x81
 #define COD9002X_82_MIC_BIAS			0x82
-#define COD9002X_83_JACK_DET1			0x83
-#define COD9002X_84_JACK_DET2			0x84
-#define COD9002X_85_MIC_DET			0x85
-#define COD9002X_86_DET_TIME			0x86
-#define COD9002X_87_LDO_DIG			0x87
-#define COD9002X_88_KEY_TIME			0x88
+#define COD9002X_83_JACK_MODE			0x83
+#define COD9002X_84_JACK_DET			0x84
+#define COD9002X_85_JACK_DBNC1			0x85
+#define COD9002X_86_JACK_DBNC2			0x86
+#define COD9002X_87_ANT1_DBNC			0x87
+#define COD9002X_88_ANT2_DBNC			0x88
+#define COD9002X_89_BTN_DBNC           0x89
+#define COD9002X_8A_HPG_DBNC           0x8a
+#define COD9002X_8B_MON           0x8b
+
+#define COD9002X_90_DLY_LDO                    0x90
+#define COD9002X_91_DLY_MCB2                   0x91
+#define COD9002X_92_DLY_MCB2L                  0x92
+#define COD9002X_93_DLY_ANT1                   0x93
+#define COD9002x_94_DLY_ANT2                   0x94
+#define COD9002X_95_DLY_BTN                    0x95
+#define COD9002X_96_SEL_RES1                   0x96
+#define COD9002X_97_SEL_RES2                   0x97
 
 /* OTP registers */
-#define COD9002X_D0_CTRL_IREF1			0xd0
-#define COD9002X_D1_CTRL_IREF2			0xd1
-#define COD9002X_D2_CTRL_IREF3			0xd2
-#define COD9002X_D3_CTRL_IREF4			0xd3
-#define COD9002X_D4_OFFSET_DAL			0xd4
-#define COD9002X_D5_OFFSET_DAR			0xd5
-#define COD9002X_D6_CTRL_IREF5			0xd6
-#define COD9002X_D7_CTRL_CP1			0xd7
-#define COD9002X_D8_CTRL_CP2			0xd8
-#define COD9002X_D9_CTRL_CP3			0xd9
-#define COD9002X_DA_CTRL_CP4			0xda
-#define COD9002X_DB_CTRL_HPS			0xdb
-#define COD9002X_DC_CTRL_EPS			0xdc
-#define COD9002X_DD_CTRL_SPKS1			0xdd
-#define COD9002X_DE_CTRL_SPKS2			0xde
+#define COD9002X_D0_CTRL_IREF1                 0xd0
+#define COD9002X_D1_CTRL_IREF2                 0xd1
+#define COD9002X_D2_CTRL_IREF3                 0xd2
+#define COD9002X_D3_CTRL_IREF4                 0xd3
+#define COD9002X_D4_OFFSET_DAL                 0xd4
+#define COD9002X_D5_OFFSET_DAR                 0xd5
+#define COD9002X_D6_CTRL_IREF5                 0xd6
+#define COD9002X_D7_CTRL_EP                   0xd7
+#define COD9002X_D8_CTRL_CP2                   0xd8
+#define COD9002X_D9_CTRL_CP3                   0xd9
+#define COD9002X_DA_RESERVED                   0xda
+#define COD9002X_DB_CTRL_HPS                   0xdb
+#define COD9002X_DC_CTRL_EPS                   0xdc
+#define COD9002X_DD_CTRL_SPKS1                 0xdd
+#define COD9002X_DE_CTRL_SPKS2                 0xde
 
 /* COD9002X_01_IRQ1PEND */
-#define IRQ1_HOOK_DET				BIT(6)
-#define IRQ1_VOL_UP_DET				BIT(5)
-#define IRQ1_VOL_DN_DET				BIT(4)
-#define IRQ1_VOICE_DET				BIT(3)
-#define IRQ1_RLS_DET				BIT(2)
-#define IRQ2_JACK_DET_R				BIT(1)
-#define IRQ3_JACK_DET_F				BIT(0)
+#define IRQ1_HPG_DET_R				BIT(7)
+#define IRQ1_HPG_DET_F				BIT(6)
+#define IRQ1_BTN_DET_R				BIT(5)
+#define IRQ1_BTN_DET_F				BIT(4)
+#define IRQ1_POLE_DET_R				BIT(3)
+#define IRQ1_POLE_DET_F				BIT(2)
+#define IRQ1_JACK_DET_R				BIT(1)
+#define IRQ1_JACK_DET_F				BIT(0)
 
 /* COD9002X_02_IRQ2PEND */
-#define IRQ2_HOOK_DET_R				BIT(5)
-#define IRQ2_VOL_UP_DET_R			BIT(4)
-#define IRQ2_VOL_DN_DET_R			BIT(3)
-#define IRQ2_VOICE_DET_R			BIT(2)
-#define IRQ2_MIC_DET_R				BIT(1)
-#define IRQ2_JACK_DET_R_FAKE				BIT(0)
+#define IRQ2_FLG_PW_MIC1_R          BIT(6)
+#define IRQ2_FLG_PW_MIC2_R			BIT(5)
+#define IRQ2_FLG_PW_MIC3_R			BIT(4)
+#define IRQ2_FLG_MTVOL_CODEC_R		BIT(3)
+#define IRQ2_FLG_PW_HP_R			BIT(2)
+#define IRQ2_FLG_PW_EP_R			BIT(1)
+#define IRQ2_FLG_PW_SPK_R			BIT(0)
 
 /* COD9002X_03_IRQ3PEND */
-#define IRQ3_HOOK_DET_F				BIT(5)
-#define IRQ3_VOL_UP_DET_F			BIT(4)
-#define IRQ3_VOL_DN_DET_F			BIT(3)
-#define IRQ3_VOICE_DET_F			BIT(2)
-#define IRQ3_MIC_DET_F				BIT(1)
-#define IRQ3_JACK_DET_F_FAKE				BIT(0)
+#define IRQ3_FLG_PW_MIC1_F          BIT(6)
+#define IRQ3_FLG_PW_MIC2_F          BIT(5)
+#define IRQ3_FLG_PW_MIC3_F          BIT(4)
+#define IRQ3_FLG_MTVOL_CODEC_F		BIT(3)
+#define IRQ3_FLG_PW_HP_F			BIT(2)
+#define IRQ3_FLG_PW_EP_F            BIT(1)
+#define IRQ3_FLG_PW_SPK_F           BIT(0)
 
-/* COD9002X_04_IRQ4PEND */
-#define IRQ4_FLG_PW_LN_R_SHIFT			7
-#define IRQ4_FLG_PW_MIC1_R_SHIFT		6
-#define IRQ4_FLG_PW_MIC2_R_SHIFT		5
-#define IRQ4_FLG_PW_MTVOL_CODEC_R_SHIFT		4
-#define IRQ4_FLG_PW_HP_R_SHIFT			2
-#define IRQ4_FLG_PW_EP_R_SHIFT			1
-#define IRQ4_FLG_PW_SPK_R_SHIFT			0
+/* COD9002X_04_IRQ1M */
+#define IRQ1M_HPG_DET_R_M_SHIFT		7
+#define IRQ1M_HPG_DET_R_M_MASK		BIT(IRQ1M_HPG_DET_R_M_SHIFT)
+#define IRQ1M_HPG_DET_F_M_SHIFT     6
+#define IRQ1M_HPG_DET_F_M_MASK   	BIT(IRQ1M_HPG_DET_F_M_SHIFT)
+#define IRQ1M_BTN_DET_R_M_SHIFT		5
+#define IRQ1M_BTN_DET_R_M_MASK      BIT(IRQ1M_BTN_DET_R_M_SHIFT)
+#define IRQ1M_BTN_DET_F_M_SHIFT     4
+#define IRQ1M_BTN_DET_F_M_MASK      BIT(IRQ1M_BTN_DET_F_M_SHIFT)
+#define IRQ1M_POLE_DET_R_M_SHIFT    3
+#define IRQ1M_POLE_DET_R_M_MASK     BIT(IRQ1M_POLE_DET_R_M_SHIFT)
+#define IRQ1M_POLE_DET_F_M_SHIFT    2
+#define IRQ1M_POLE_DET_F_M_MASK     BIT(IRQ1M_POLE_DET_F_M_SHIFT)
+#define IRQ1M_JACK_DET_R_M_SHIFT    1
+#define IRQ1M_JACK_DET_R_M_MASK     BIT(IRQ1M_JACK_DET_R_M_SHIFT)
+#define IRQ1M_JACK_DET_F_M_SHIFT    0
+#define IRQ1M_JACK_DET_F_M_MASK     BIT(IRQ1M_JACK_DET_F_M_SHIFT)
+#define IRQ1M_MASK_ALL              0xFF
 
-/* COD9002X_05_IRQ5PEND */
-#define IRQ5_FLG_PW_LN_F_SHIFT			7
-#define IRQ5_FLG_PW_MIC1_F_SHIFT		6
-#define IRQ5_FLG_PW_MIC2_F_SHIFT		5
-#define IRQ5_FLG_PW_MTVOL_CODEC_F_SHIFT		4
-#define IRQ5_FLG_PW_HP_F_SHIFT			2
-#define IRQ5_FLG_PW_EP_F_SHIFT			1
-#define IRQ5_FLG_PW_SPK_F_SHIFT			0
+/* COD9002X_05_IRQ2M */
+#define IRQ2M_FLG_PW_MIC1_R_M_SHIFT     6
+#define IRQ2M_FLG_PW_MIC1_R_M_MASK      BIT(IRQ2M_FLG_PW_MIC1_R_M_SHIFT)
+#define IRQ2M_FLG_PW_MIC2_R_M_SHIFT     5
+#define IRQ2M_FLG_PW_MIC2_R_M_MASK      BIT(IRQ2M_FLG_PW_MIC2_R_M_SHIFT)
+#define IRQ2M_FLG_PW_MIC3_R_M_SHIFT     4
+#define IRQ2M_FLG_PW_MIC3_R_M_MASK      BIT(IRQ2M_FLG_PW_MIC3_R_M_SHIFT)
+#define IRQ2M_FLG_MTVOL_CODEC_R_M_SHIFT 3
+#define IRQ2M_FLG_MTVOL_CODEC_R_M_MASK  BIT(IRQ2M_FLG_MTVOL_CODEC_R_M_SHIFT)
+#define IRQ2M_FLG_PW_HP_R_M_SHIFT       2
+#define IRQ2M_FLG_PW_HP_R_M_MASK        BIT(IRQ2M_FLG_PW_HP_R_M_SHIFT)
+#define IRQ2M_FLG_PW_EP_R_M_SHIFT       1
+#define IRQ2M_FLG_PW_EP_R_M_MASK        BIT(IRQ2M_FLG_PW_EP_R_M_SHIFT)
+#define IRQ2M_FLG_PW_SPK_R_M_SHIFT      0
+#define IRQ2M_FLG_PW_SPK_R_M_MASK		BIT(IRQ2M_FLG_PW_SPK_R_M_SHIFT)
+#define IRQ2M_MASK_ALL              0xFF
 
-/* COD9002X_06_IRQ1M */
-#define IRQ1M_HOOK_DET_M_SHIFT                  6
-#define IRQ1M_HOOK_DET_M_MASK                   BIT(IRQ1M_HOOK_DET_M_SHIFT)
+/* COD9002X_06_IRQ3M */
+#define IRQ3M_FLG_PW_MIC1_F_M_SHIFT		6
+#define IRQ3M_FLG_PW_MIC1_F_M_MASK      BIT(IRQ3M_FLG_PW_MIC1_F_M_SHIFT)
+#define IRQ3M_FLG_PW_MIC2_F_M_SHIFT     5
+#define IRQ3M_FLG_PW_MIC2_F_M_MASK      BIT(IRQ3M_FLG_PW_MIC2_F_M_SHIFT)
+#define IRQ3M_FLG_PW_MIC3_F_M_SHIFT     4
+#define IRQ3M_FLG_PW_MIC3_F_M_MASK      BIT(IRQ3M_FLG_PW_MIC3_F_M_SHIFT)
+#define IRQ3M_FLG_MTVOL_CODEC_F_M_SHIFT 3
+#define IRQ3M_FLG_MTVOL_CODEC_F_M_MASK  BIT(IRQ3M_FLG_MTVOL_CODEC_F_M_SHIFT)
+#define IRQ3M_FLG_PW_HP_F_M_SHIFT       2
+#define IRQ3M_FLG_PW_HP_F_M_MASK        BIT(IRQ3M_FLG_PW_HP_F_M_SHIFT)
+#define IRQ3M_FLG_PW_EP_F_M_SHIFT       1
+#define IRQ3M_FLG_PW_EP_F_M_MASK        BIT(IRQ3M_FLG_PW_EP_F_M_SHIFT)
+#define IRQ3M_FLG_PW_SPK_F_M_SHIFT      0
+#define IRQ3M_FLG_PW_SPK_F_M_MASK       BIT(IRQ3M_FLG_PW_SPK_F_M_SHIFT)
+#define IRQ3M_MASK_ALL              0xFF
 
-#define IRQ1M_VOLUP_DET_M_SHIFT                 5
-#define IRQ1M_VOLUP_DET_M_MASK                  BIT(IRQ1M_VOLUP_DET_M_SHIFT)
+/* COD9002X_07_STATUS1 */
+#define STATUS1_MCB2_MON_SHIFT			6
+#define STATUS1_MCB2_MON_MASK         	BIT(STATUS1_MCB2_MON_SHIFT)
+#define STATUS1_MCB2_L_MON_SHIFT        5
+#define STATUS1_MCB2_L_MON_MASK         BIT(STATUS1_MCB2_L_MON_SHIFT)
+#define STATUS1_ANT1_DET_SHIFT          4
+#define STATUS1_ANT1_DET_MASK           BIT(STATUS1_ANT1_DET_SHIFT)
+#define STATUS1_ANT2_DET_SHIFT          3
+#define STATUS1_ANT2_DET_MASK           BIT(STATUS1_ANT2_DET_SHIFT)
+#define STATUS1_POLE_DET_SHIFT          2
+#define STATUS1_POLE_DET_MASK           BIT(STATUS1_POLE_DET_SHIFT)
+#define STATUS1_BTN_DET_SHIFT           1
+#define STATUS1_BTN_DET_MASK            BIT(STATUS1_BTN_DET_SHIFT)
+#define STATUS1_JACK_DET_SHIFT          0
+#define STATUS1_JACK_DET_MASK           BIT(STATUS1_JACK_DET_SHIFT)
 
-#define IRQ1M_VOLDN_DET_M_SHIFT                 4
-#define IRQ1M_VOLDN_DET_M_MASK                  BIT(IRQ1M_VOLDN_DET_M_SHIFT)
-
-#define IRQ1M_VOICE_DET_M_SHIFT                 3
-#define IRQ1M_VOICE_DET_M_MASK                  BIT(IRQ1M_VOICE_DET_M_SHIFT)
-
-#define IRQ1M_RLS_DET_M_SHIFT                   2
-#define IRQ1M_RLS_DET_M_MASK                    BIT(IRQ1M_RLS_DET_M_SHIFT)
-
-#define IRQ1M_MIC_DET_R_M_SHIFT                 1
-#define IRQ1M_MIC_DET_R_M_MASK                  BIT(IRQ1M_MIC_DET_R_M_SHIFT)
-
-#define IRQ1M_JACK_DET_R_M_SHIFT                0
-#define IRQ1M_JACK_DET_R_M_MASK                 BIT(IRQ1M_JACK_DET_R_M_SHIFT)
-
-#define IRQ1M_MASK_ALL				0xFF
-
-/* COD9002X_07_IRQ2M */
-#define IRQ2M_HOOK_DET_R_M_SHIFT                5
-#define IRQ2M_HOOK_DET_R_M_MASK                 BIT(IRQ2M_HOOK_DET_R_M_SHIFT)
-
-#define IRQ2M_VOLP_DET_R_M_SHIFT                4
-#define IRQ2M_VOLP_DET_R_M_MASK                 BIT(IRQ2M_VOLP_DET_R_M_SHIFT)
-
-#define IRQ2M_VOLN_DET_R_M_SHIFT                3
-#define IRQ2M_VOLN_DET_R_M_MASK                 BIT(IRQ2M_VOLP_DET_R_M_SHIFT)
-
-#define IRQ2M_VOICE_DET_R_M_SHIFT               2
-#define IRQ2M_VOICE_DET_R_M_MASK                BIT(IRQ2M_VOICE_DET_R_M_SHIFT)
-
-#define IRQ2M_MIC_DET_R_M_SHIFT                 1
-#define IRQ2M_MIC_DET_R_M_MASK                  BIT(IRQ2M_MIC_DET_R_M_SHIFT)
-
-#define IRQ2M_JACK_DET_R_M_SHIFT                0
-#define IRQ2M_JACK_DET_R_M_MASK                 BIT(IRQ2M_JACK_DET_R_M_SHIFT)
-
-#define IRQ2M_MASK_ALL				0xFF
-
-/* COD9002X_08_IRQ3M */
-#define IRQ3M_HOOK_DET_F_M_SHIFT                5
-#define IRQ3M_HOOK_DET_F_M_MASK                 BIT(IRQ3M_HOOK_DET_F_M_SHIFT)
-
-#define IRQ3M_VOLP_DET_F_M_SHIFT                4
-#define IRQ3M_VOLP_DET_F_M_MASK                 BIT(IRQ3M_VOLP_DET_F_M_SHIFT)
-
-#define IRQ3M_VOLN_DET_F_M_SHIFT                3
-#define IRQ3M_VOLN_DET_F_M_MASK                 BIT(IRQ3M_VOLP_DET_F_M_SHIFT)
-
-#define IRQ3M_VOICE_DET_F_M_SHIFT               2
-#define IRQ3M_VOICE_DET_F_M_MASK                BIT(IRQ3M_VOICE_DET_F_M_SHIFT)
-
-#define IRQ3M_MIC_DET_F_M_SHIFT                 1
-#define IRQ3M_MIC_DET_F_M_MASK                  BIT(IRQ3M_MIC_DET_F_M_SHIFT)
-
-#define IRQ3M_JACK_DET_F_M_SHIFT                0
-#define IRQ3M_JACK_DET_F_M_MASK                 BIT(IRQ3M_JACK_DET_F_M_SHIFT)
-
-#define IRQ3M_MASK_ALL				0xFF
-
-
-/* COD9002X_09_IRQ4M */
-#define IRQ4M_FLG_PW_LN_R_M_SHIFT		7
-#define IRQ4M_FLG_PW_MIC1_R_M_SHIFT		6
-#define IRQ4M_FLG_PW_MIC2_R_M_SHIFT		5
-#define IRQ4M_FLG_PW_MIC3_R_M_SHIFT		4
-#define IRQ4M_FLG_PW_MTVOL_CODEC_R_M_SHIFT	3
-#define IRQ4M_FLG_PW_HP_R_M_SHIFT		2
-#define IRQ4M_FLG_PW_EP_R_M_SHIFT		1
-#define IRQ4M_FLG_PW_SPK_R_M_SHIFT		0
-
-/* COD9002X_10_IRQ5M */
-#define IRQ5M_FLG_PW_LN_F_M_SHIFT		7
-#define IRQ5M_FLG_PW_MIC1_F_M_SHIFT		6
-#define IRQ5M_FLG_PW_MIC2_F_M_SHIFT		5
-#define IRQ5M_FLG_PW_MIC3_F_M_SHIFT		4
-#define IRQ5M_FLG_PW_MTVOL_CODEC_F_M_SHIFT	3
-#define IRQ5M_FLG_PW_HP_F_M_SHIFT		2
-#define IRQ5M_FLG_PW_EP_F_M_SHIFT		1
-#define IRQ5M_FLG_PW_SPK_F_M_SHIFT		0
-
-/* COD9002X_0A_STATUS1 */
-#define STATUS1_HOOK_DET_SHIFT			5
-#define STATUS1_VOLP_DET_SHIFT			4
-#define STATUS1_VOLN_DET_SHIFT			3
-#define STATUS1_VOICE_DET_SHIFT			2
-#define STATUS1_MIC_DET_SHIFT			1
-#define STATUS1_JACK_DET_SHIFT			0
-
-/* COD9002X_0B_STATUS2 */
-#define STATUS2_BTN_IMP_SHIFT		2
-#define STATUS2_BTN_IMP_WIDTH		3
-#define STATUS2_BTN_IMP_MASK		MASK(STATUS2_BTN_IMP_WIDTH, \
-					STATUS2_BTN_IMP_SHIFT)
-
-#define STATUS2_MIC_IMP_SHIFT		0
-#define STATUS2_MIC_IMP_WIDTH		2
-#define STATUS2_MIC_IMP_MASK		MASK(STATUS2_MIC_IMP_WIDTH, \
-					STATUS2_MIC_IMP_SHIFT)
-
-/* COD9002X_0C_STATUS3 */
-#define STATUS3_FLG_PW_LN_SHIFT			7
-#define STATUS3_FLG_PW_MIC1_SHIFT		6
-#define STATUS3_FLG_PW_MIC2_SHIFT		5
-#define STATUS3_FLG_PW_MIC3_SHIFT		4
-#define STATUS3_FLG_PW_MTVOL_CODEC_SHIFT	3
-#define STATUS3_FLG_PW_HP_SHIFT			2
-#define STATUS3_FLG_PW_EP_SHIFT			1
-#define STATUS3_FLG_PW_SPK_SHIFT		0
+/* COD9002X_08_STATUS2 */
+#define STATUS2_FLG_PW_MIC1_SHIFT		6
+#define STATUS2_FLG_PW_MIC1_MASK        BIT(STATUS2_FLG_PW_MIC1_SHIFT)
+#define STATUS2_FLG_PW_MIC2_SHIFT       5
+#define STATUS2_FLG_PW_MIC2_MASK        BIT(STATUS2_FLG_PW_MIC2_SHIFT)
+#define STATUS2_FLG_PW_MIC3_SHIFT       4
+#define STATUS2_FLG_PW_MIC3_MASK        BIT(STATUS2_FLG_PW_MIC3_SHIFT)
+#define STATUS2_FLG_MTVOL_CODEC_SHIFT   3
+#define STATUS2_FLG_MTVOL_CODEC_MASK    BIT(STATUS2_FLG_MTVOL_CODEC_SHIFT)
+#define STATUS2_FLG_PW_HP_SHIFT         2
+#define STATUS2_FLG_PW_HP_MASK          BIT(STATUS2_FLG_PW_HP_SHIFT)
+#define STATUS2_FLG_PW_EP_SHIFT         1
+#define STATUS2_FLG_PW_EP_MASK          BIT(STATUS2_FLG_PW_EP_SHIFT)
+#define STATUS2_FLG_PW_SPK_SHIFT		0
+#define STATUS2_FLG_PW_SPK_MASK         BIT(STATUS2_FLG_PW_SPK_SHIFT)
 
 /* COD9002X_10_PD_REF */
 #define PDB_VMID_SHIFT				5
@@ -392,8 +388,8 @@ struct cod9002x_priv {
 #define PDB_MCB2_SHIFT				1
 #define PDB_MCB2_MASK				BIT(PDB_MCB2_SHIFT)
 
-#define PDB_MCB_LDO_CODEC_SHIFT			0
-#define PDB_MCB_LDO_CODEC_MASK			BIT(PDB_MCB_LDO_CODEC_SHIFT)
+#define PDB_MCB_LDO_CODEC_SHIFT		0
+#define PDB_MCB_LDO_CODEC_MASK		BIT(PDB_MCB_LDO_CODEC_SHIFT)
 
 /* COD9002X_11_PD_AD1 */
 #define RESETB_DSMR_SHIFT	0
@@ -422,19 +418,13 @@ struct cod9002x_priv {
 #define EN_DSML_PREQ_SHIFT      5
 #define EN_DSML_PREQ_MASK       BIT(EN_DSML_PREQ_SHIFT)
 
-#define PDB_MIXL_SHIFT      6
-#define PDB_MIXL_MASK       BIT(PDB_MIXL_SHIFT)
-
-#define PDB_MIXR_SHIFT      7
+#define PDB_MIXR_SHIFT      6
 #define PDB_MIXR_MASK       BIT(PDB_MIXR_SHIFT)
 
+#define PDB_MIXL_SHIFT      7
+#define PDB_MIXL_MASK       BIT(PDB_MIXL_SHIFT)
+
 /* COD9002X_12_PD_AD2 */
-#define PDB_LNL_SHIFT		5
-#define PDB_LNL_MASK		BIT(PDB_LNL_SHIFT)
-
-#define PDB_LNR_SHIFT		4
-#define PDB_LNR_MASK		BIT(PDB_LNR_SHIFT)
-
 #define PDB_MIC_BST1_SHIFT		5
 #define PDB_MIC_BST1_MASK		BIT(PDB_MIC_BST1_SHIFT)
 
@@ -486,8 +476,8 @@ struct cod9002x_priv {
 #define PDB_SPK_PROT_MASK	BIT(PDB_SPK_PROT_SHIFT)
 
 /* COD9002X_15_PD_DA3 */
-#define PDB_DOUBLER_SHIFT	7
-#define PDB_DOUBLER_MASK	BIT(PDB_DOUBLER_SHIFT)
+#define RESETB_CP_SHIFT	7
+#define RESETB_CP_MASK	BIT(RESETB_CP_SHIFT)
 
 #define PDB_CP_SHIFT		6
 #define PDB_CP_MASK		BIT(PDB_CP_SHIFT)
@@ -517,9 +507,6 @@ struct cod9002x_priv {
 #define APW_AUTO_AD_SHIFT	4
 #define APW_AUTO_AD_MASK	BIT(APW_AUTO_AD_SHIFT)
 
-#define APW_LN_SHIFT		3
-#define APW_LN_MASK		BIT(APW_LN_SHIFT)
-
 #define APW_MIC1_SHIFT		2
 #define APW_MIC1_MASK		BIT(APW_MIC1_SHIFT)
 
@@ -530,6 +517,10 @@ struct cod9002x_priv {
 #define APW_MIC3_MASK		BIT(APW_MIC3_SHIFT)
 
 /* COD9002X_17_PWAUTO_DA */
+#define DLY_HP_APW_SHIFT    6
+#define DLY_HP_APW_WIDTH    2
+#define DLY_HP_APW_MASK     MASK(DLY_HP_APW_WIDTH, DLY_HP_APW_SHIFT)
+
 #define EN_DLYST_DA_SHIFT	5
 #define EN_DLYST_DA_MASK	BIT(EN_DLYST_DA_SHIFT)
 
@@ -550,15 +541,15 @@ struct cod9002x_priv {
 #define CTMF_VMID_WIDTH		2
 #define CTMF_VMID_MASK		MASK(CTMF_VMID_WIDTH, CTMF_VMID_SHIFT)
 
-#define CTMF_VMID_500K_OM       2
-#define CTMF_VMID_50K_OM        1
-#define CTMF_VMID_5K_OM         0
+#define CTMF_VMID_600K_OM       2
+#define CTMF_VMID_60K_OM        1
+#define CTMF_VMID_1K_OM         0
 
 #define CTRV_MCB1_SHIFT		4
 #define CTRV_MCB1_WIDTH		2
 #define CTRV_MCB1_MASK		MASK(CTRV_MCB1_WIDTH, CTRV_MCB1_SHIFT)
 
-#define MIC_BIAS1_VO_2_5V	1
+#define MIC_BIAS1_VO_2_8V	1
 #define MIC_BIAS1_VO_2_6V	2
 #define MIC_BIAS1_VO_3_0V	3
 
@@ -568,20 +559,31 @@ struct cod9002x_priv {
 #define EN_DET_CLK_SHIFT	0
 #define EN_DET_CLK_MASK		BIT(EN_DET_CLK_SHIFT)
 
-/* COD9002X_19_ZCD_AD */
-#define ZCD_RESET_TIME_SHIFT		4
-#define ZCD_RESET_TIME_WIDTH		2
-#define ZCD_RESET_TIME_MASK		MASK(ZCD_RESET_TIME_WIDTH, \
-						ZCD_RESET_TIME_SHIFT)
+/* COD9002X_19_SV_HP */
+#define SKIP_HP_SV_SHIFT	5
+#define SKIP_HP_SV_MASK	BIT(SKIP_HP_SV_SHIFT)
 
-#define EN_MIC3_ZCD_SHIFT	2
-#define EN_MIC3_ZCD_MASK	BIT(EN_MIC3_ZCD_SHIFT)
+#define DLY_LONG_HP_SV_SHIFT	4
+#define DLY_LONG_HP_SV_MASK		BIT(DLY_LONG_HP_SV_SHIFT)
 
-#define EN_MIC1_ZCD_SHIFT	1
-#define EN_MIC1_ZCD_MASK	BIT(EN_MIC1_ZCD_SHIFT)
+/* COD9002X_1A_ZCD_DA */
+#define ZCD_DLY_SHIFT     	4
+#define ZCD_DLY_WIDTH     	3
+#define ZCD_DLY_MASK      	MASK(ZCD_DLY_WIDTH, ZCD_DLY_SHIFT)
 
-#define EN_MIC2_ZCD_SHIFT	0
-#define EN_MIC2_ZCD_MASK	BIT(EN_MIC2_ZCD_SHIFT)
+#define EN_HP_ZCD_SHIFT     2
+#define EN_HP_ZCD_MASK 		BIT(EN_HP_ZCD_SHIFT)
+
+#define EN_EP_ZCD_SHIFT     1
+#define EN_EP_ZCD_MASK      BIT(EN_EP_ZCD_SHIFT)
+
+#define EN_SPK_ZCD_SHIFT    0
+#define EN_SPK_ZCD_MASK     BIT(EN_SPK_ZCD_SHIFT)
+
+/* COD9002X_1B_ZCD */
+#define ZCD_TIMEOUT_SHIFT       0
+#define ZCD_TIMEOUT_WIDTH       7
+#define ZCD_TIMEOUT_MASK        MASK(ZCD_TIMEOUT_WIDTH, ZCD_TIMEOUT_SHIFT)
 
 /* COD9002X_1C_SV_DA */
 #define EN_EP_SV_SHIFT		7
@@ -606,8 +608,8 @@ struct cod9002x_priv {
 
 #define SV_DLY_SEL_8192_X_FS	0
 #define SV_DLY_SEL_2048_X_FS	1
-#define SV_DLY_SEL_512_X_FS	2
-#define SV_DLY_SEL_128_X_FS	3
+#define SV_DLY_SEL_512_X_FS		2
+#define SV_DLY_SEL_128_X_FS		3
 
 /* COD9002X_20_VOL_AD1 */
 #define VOLAD1_CTVOL_BST1_SHIFT		4
@@ -631,12 +633,6 @@ struct cod9002x_priv {
 #define VOLAD3_CTVOL_BST_PGA3_WIDTH	3
 
 /* COD9002X_23_MIX_AD1 */
-#define EN_MIX_LNLL_SHIFT       7
-#define EN_MIX_LNLL_MASK        BIT(EN_MIX_LNLL_SHIFT)
-
-#define EN_MIX_LNRR_SHIFT       6
-#define EN_MIX_LNRR_MASK        BIT(EN_MIX_LNRR_SHIFT)
-
 #define EN_MIX_MIC1L_SHIFT	5
 #define EN_MIX_MIC1L_MASK	BIT(EN_MIX_MIC1L_SHIFT)
 
@@ -655,19 +651,21 @@ struct cod9002x_priv {
 #define EN_MIX_MIC3R_SHIFT	0
 #define EN_MIX_MIC3R_MASK	BIT(EN_MIX_MIC3R_SHIFT)
 
-/* COD9002X_24_MIX_AD2 */
-#define EN_MIX_LNLR_SHIFT       7
-#define EN_MIX_LNLR_MASK        BIT(EN_MIX_LNLR_SHIFT)
+/* COD9002X_2D_VOL_TDMA7 */
+#define RESETB_BST1_SHIFT 6
+#define RESETB_BST1_MASK   BIT(RESETB_BST1_SHIFT)
 
-#define EN_MIX_LNRL_SHIFT       6
-#define EN_MIX_LNRL_MASK        BIT(EN_MIX_LNRL_SHIFT)
+#define RESETB_BST2_SHIFT 5
+#define RESETB_BST2_MASK   BIT(RESETB_BST2_SHIFT)
 
+#define RESETB_BST3_SHIFT 4
+#define RESETB_BST3_MASK   BIT(RESETB_BST3_SHIFT)
 
 /* COD9002X_30_VOL_HPL */
 /* COD9002X_31_VOL_HPR */
-#define VOLHP_CTVOL_HP_SHIFT	0
-#define VOLHP_CTVOL_HP_WIDTH	6
-#define VOLHP_CTVOL_HP_MASK	MASK(VOLHP_CTVOL_HP_WIDTH, VOLHP_CTVOL_HP_SHIFT)
+#define VOLHP_CTVOL_HP_SHIFT    0
+#define VOLHP_CTVOL_HP_WIDTH    6
+#define VOLHP_CTVOL_HP_MASK MASK(VOLHP_CTVOL_HP_WIDTH, VOLHP_CTVOL_HP_SHIFT)
 
 /* COD9002X_32_VOL_EP_SPK */
 #define CTVOL_EP_SHIFT		0
@@ -681,16 +679,10 @@ struct cod9002x_priv {
 					CTVOL_SPK_PGA_SHIFT)
 
 /* COD9002X_33_CTRL_EP */
-
-#define CTMV_CP_MODE_SHIFT	4
-#define CTMV_CP_MODE_WIDTH	2
-#define CTMV_CP_MODE_MASK	MASK(CTMV_CP_MODE_WIDTH, \
-					CTMV_CP_MODE_SHIFT)
-
-#define CTMV_CP_MODE_ANALOG	3
-#define CTMV_CP_MODE_DIGITAL	2
-#define CTMV_CP_MODE_HALF_VDD	1
-#define CTMV_CP_MODE_FULL_VDD	0
+#define SEL_EP_CHOP_SHIFT	4
+#define SEL_EP_CHOP_WIDTH	2
+#define SEL_EP_CHOP_MASK	MASK(SEL_EP_CHOP_WIDTH, \
+					SEL_EP_CHOP_SHIFT)
 
 #define EN_EP_PRT_SHIFT		1
 #define EN_EP_PRT_MASK		BIT(EN_EP_PRT_SHIFT)
@@ -714,18 +706,25 @@ struct cod9002x_priv {
 #define CTPOP_HP_SHIFT		2
 #define CTPOP_HP_MASK		BIT(CTPOP_HP_SHIFT)
 
-#define EN_HP_BPS_SHIFT		1
-#define EN_HP_BPS_MASK		BIT(EN_HP_BPS_SHIFT)
-
-#define EN_HP_IDET_SHIFT	0
-#define EN_HP_IDET_MASK		BIT(EN_HP_IDET_SHIFT)
-
 /* COD9002X_35_CTRL_SPK */
+#define EN_SPK_SDN_SHIFT	6
+#define EN_SPK_SDN_MASK     BIT(EN_SPK_SDN_SHIFT)
+
+#define CTMF_SPK_OSC_SHIFT   4
+#define CTMF_SPK_OSC_WIDTH   2
+#define CTMF_SPK_OSC_MASK    MASK(CTMF_SPK_OSC_WIDTH, \
+							CTMF_SPK_OSC_SHIFT)
+
 #define EN_SPK_CAR_SHIFT	3
 #define EN_SPK_CAR_MASK		BIT(EN_SPK_CAR_SHIFT)
 
 #define EN_SPK_DAMP_SHIFT	2
 #define EN_SPK_DAMP_MASK	BIT(EN_SPK_DAMP_SHIFT)
+
+#define CTMI_SPK_PROT_SHIFT   0
+#define CTMI_SPK_PROT_WIDTH   2
+#define CTMI_SPK_PROT_MASK    MASK(CTMI_SPK_PROT_WIDTH, \
+							CTMI_SPK_PROT_SHIFT)
 
 /* COD9002X_36_MIX_DA1 */
 #define EN_HP_MIXL_DCTL_SHIFT	7
@@ -765,6 +764,17 @@ struct cod9002x_priv {
 #define EN_SPK_MIX_DCTR_SHIFT	2
 #define EN_SPK_MIX_DCTR_MASK	BIT(EN_SPK_MIX_DCTR_SHIFT)
 
+/* COD9002X_38_DCT_CLK1 */
+#define CTMD_DCT_CLK1_SHIFT 0
+#define CTMD_DCT_CLK1_WIDTH 2
+#define CTMD_DCT_CLK1_MASK  MASK(CTMD_DCT_CLK1_WIDTH, \
+								CTMD_DCT_CLK1_SHIFT)
+
+#define CTMD_DCT_CLK2_SHIFT 2
+#define CTMD_DCT_CLK2_WIDTH 2
+#define CTMD_DCT_CLK2_MASK  MASK(CTMD_DCT_CLK2_WIDTH, \
+								CTMD_DCT_CLK2_SHIFT)
+
 /* COD9002X_40_DIGITAL_POWER */
 #define PDB_ADCDIG_SHIFT	7
 #define PDB_ADCDIG_MASK		BIT(PDB_ADCDIG_SHIFT)
@@ -786,6 +796,9 @@ struct cod9002x_priv {
 
 #define ABN_STA_CHK_SHIFT	1
 #define ABN_STA_CHK_MASK	BIT(ABN_STA_CHK_SHIFT)
+
+#define INT_BCK_SHIFT   1
+#define INT_BCK_MASK    BIT(INT_BCK_SHIFT)
 
 /* COD9002X_41_FORMAT */
 #define DATA_WORD_LENGTH_SHIFT	6
@@ -820,6 +833,12 @@ struct cod9002x_priv {
 #define LRCLK_POL_MASK		BIT(LRCLK_POL_SHIFT)
 
 /* COD9002X_42_ADC1 */
+#define ADC1_SDOUT_CD0_SHIFT 	7
+#define ADC1_SDOUT_CD0_MASK		BIT(ADC1_SDOUT_CD0_SHIFT)
+
+#define ADC1_NOTCH_EN_SHIFT    6
+#define ADC1_NOTCH_EN_MASK     BIT(ADC1_NOTCH_EN_SHIFT)
+
 #define ADC1_MAXSCALE_SHIFT	4
 #define ADC1_MAXSCALE_WIDTH	2
 #define ADC1_MAXSCALE_MASK	MASK(ADC1_MAXSCALE_WIDTH, ADC1_MAXSCALE_SHIFT)
@@ -843,6 +862,25 @@ struct cod9002x_priv {
 
 #define ADC1_MUTE_AD_EN_SHIFT	0
 #define ADC1_MUTE_AD_EN_MASK	BIT(ADC1_MUTE_AD_EN_SHIFT)
+
+/* COD9002X_43_ADC_L_VOL */
+#define DVOL_ADL_SHIFT      0
+#define DVOL_ADL_WIDTH      8
+#define DVOL_ADL_MASK       MASK(DVOL_ADL_WIDTH, DVOL_ADL_SHIFT)
+
+/* COD9002X_44_ADC_R_VOL */
+#define DVOL_ADR_SHIFT      0
+#define DVOL_ADR_WIDTH      8
+#define DVOL_ADR_MASK       MASK(DVOL_ADR_WIDTH, DVOL_ADR_SHIFT)
+
+/* COD9002X_45_DMIX_AD */
+#define MONOMIX_ADL_SHIFT      4
+#define MONOMIX_ADL_WIDTH      3
+#define MONOMIX_ADL_MASK       MASK(MONOMIX_ADL_WIDTH, MONOMIX_ADL_SHIFT)
+
+#define MONOMIX_ADR_SHIFT      0
+#define MONOMIX_ADR_WIDTH      3
+#define MONOMIX_ADR_MASK       MASK(MONOMIX_ADR_WIDTH, MONOMIX_ADR_SHIFT)
 
 /* COD9002X_50_DAC1 */
 #define DAC1_MONOMIX_SHIFT	4
@@ -890,8 +928,12 @@ struct cod9002x_priv {
 
 #define DNC_MAX_GAIN_SHIFT	0
 #define DNC_MAX_GAIN_WIDTH	5
+#define DNC_MAX_GAIN_MASK  MASK(DNC_MAX_GAIN_WIDTH, DNC_MAX_GAIN_SHIFT)
 
 /** COD9002X_56_DNC3 **/
+#define DNC_HP_VOL_EN_SHIFT  7
+#define DNC_HP_VOL_EN_MASK  BIT(DNC_HP_VOL_EN_SHIFT)
+
 #define DNC_LVL_L_SHIFT		4
 #define DNC_LVL_L_WIDTH		3
 
@@ -911,6 +953,20 @@ struct cod9002x_priv {
 #define DNC_WIN_SIZE_750HZ	2
 #define DNC_WIN_SIZE_1500HZ	1
 #define DNC_WIN_SIZE_3000HZ	0
+
+/** COD9002X_5A_DNC7 **/
+#define DNC7_START_GAIN_SHIFT    0
+#define DNC7_START_GAIN_WIDTH    5
+#define DNC7_START_GAIN_MASK     MASK(DNC7_START_GAIN_WIDTH, DNC7_START_GAIN_SHIFT)
+
+/** COD3026X_5C_DNC9 **/
+#define DNC_ZCD_EN_SHIFT    7
+#define DNC_ZCD_EN_MASK     BIT(DNC_ZCD_EN_SHIFT)
+
+#define DNC_ZCD_TIMEOUT_SHIFT   0
+#define DNC_ZCD_TIMEOUT_WIDTH   7
+#define DNC_ZCD_TIMEOUT_MASK    MASK(DNC_ZCD_TIMEOUT_WIDTH, \
+								DNC_ZCD_TIMEOUT_SHIFT)
 
 /** COD9002X_71_CLK1_DA **/
 #define CLK_DA_INV_SHIFT	7
@@ -987,7 +1043,7 @@ struct cod9002x_priv {
 #define TEST_LOOPBACK_FULL_MASK		BIT(TEST_LOOPBACK_FULL_SHIFT)
 
 /* COD9002X_75_CHOP_AD */
-#define EN_LN_CHOP_SHIFT	6		//cod9002 design should be fixed
+#define EN_LN_CHOP_SHIFT	6		/* cod9002 design should be fixed */
 #define EN_LN_CHOP_MASK	BIT(EN_LN_CHOP_SHIFT)
 
 #define EN_MIC3_CHOP_SHIFT	5
@@ -1024,6 +1080,21 @@ struct cod9002x_priv {
 #define EN_SPK_CHOP_SHIFT	1
 #define EN_SPK_CHOP_MASK	BIT(EN_SPK_CHOP_SHIFT)
 
+/**  COD9002X_78_DSM_AD **/
+#define COD9002X_78_MIC_ON  COD9002X_78_DSM_AD
+
+#define EN_LN_SHIFT 7
+#define EN_LN_MASK  BIT(EN_LN_SHIFT)
+
+#define EN_MIC3_SHIFT   6
+#define EN_MIC3_MASK    BIT(EN_MIC3_SHIFT)
+
+#define EN_MIC2_SHIFT   5
+#define EN_MIC2_MASK    BIT(EN_MIC2_SHIFT)
+
+#define EN_MIC1_SHIFT   4
+#define EN_MIC1_MASK    BIT(EN_MIC1_SHIFT)
+
 /** COD9002X_80_DET_PDB **/
 #define DET_EN_TEST_DET_SHIFT   0
 #define DET_EN_TEST_DET_MASK    BIT(DET_EN_TEST_DET_SHIFT)
@@ -1054,11 +1125,14 @@ struct cod9002x_priv {
 #define EN_PDB_JD_MASK		BIT(EN_PDB_JD_SHIFT)
 
 /** COD9002X_82_MIC_BIAS **/
+#define EN_TEST_DCFET_SHIFT     7
+#define EN_TEST_DCFET_MASK      BIT(EN_PDB_JD_SHIFT)
+
 #define CTRV_MCB2_SHIFT		2
 #define CTRV_MCB2_WIDTH		2
 #define CTRV_MCB2_MASK		MASK(CTRV_MCB2_WIDTH, CTRV_MCB2_SHIFT)
 
-#define MIC_BIAS2_VO_2_5V	1
+#define MIC_BIAS2_VO_2_8V	1
 #define MIC_BIAS2_VO_2_6V	2
 #define MIC_BIAS2_VO_3_0V	3
 
@@ -1258,15 +1332,27 @@ struct cod9002x_priv {
 #define CTMF_CP_CLK_MASK	MASK(CTMF_CP_CLK_WIDTH, \
 					CTMF_CP_CLK_SHIFT)
 
-#define CP_MAIN_CLK_3MHZ	3
-#define CP_MAIN_CLK_1_5MHZ	2
-#define CP_MAIN_CLK_750KHZ	1
-#define CP_MAIN_CLK_375KHZ	0
+#define CP_MAIN_CLK_781_25MHZ	3
+#define CP_MAIN_CLK_390_625MHZ	2
+#define CP_MAIN_CLK_195_312KHZ	1
+#define CP_MAIN_CLK_97_656KHZ	0
 
 /* COD9002X_DB_CTRL_HPS */
-#define CTMI_HP_A_SHIFT		6
-#define CTMI_HP_A_WIDTH		2
-#define CTMI_HP_A_MASK		MASK(CTMI_HP_A_WIDTH, CTMI_HP_A_SHIFT)
+#define CTMI_HP_PRE_SHIFT	6
+#define CTMI_HP_PRE_WIDTH	2
+#define CTMI_HP_PRE_MASK	MASK(CTMI_HP_PRE_WIDTH, CTMI_HP_PRE_SHIFT)
+
+#define CTMI_HP_AB_SHIFT		4
+#define CTMI_HP_AB_WIDTH		2
+#define CTMI_HP_AB_MASK		MASK(CTMI_HP_AB_WIDTH, CTMI_HP_AB_SHIFT)
+
+#define CTMI_HP_MIX_SHIFT        2
+#define CTMI_HP_MIX_WIDTH        2
+#define CTMI_HP_MIX_MASK     MASK(CTMI_HP_MIX_WIDTH, CTMI_HP_MIX_SHIFT)
+
+#define CTMI_HP_P_SHIFT        0
+#define CTMI_HP_P_WIDTH        2
+#define CTMI_HP_P_MASK     MASK(CTMI_HP_P_WIDTH, CTMI_HP_P_SHIFT)
 
 #define CTMI_HP_1_UA		0
 #define CTMI_HP_2_UA		1

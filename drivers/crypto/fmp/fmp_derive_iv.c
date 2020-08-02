@@ -22,55 +22,18 @@
 
 static DEFINE_SPINLOCK(fmp_tfm_lock);
 
+#ifdef CONFIG_CRYPTO_FIPS
 int calculate_sha256(struct crypto_hash *hash_tfm, char *dst, char *src, int len)
 {
-	int ret = -1;
-	unsigned long flag;
-	struct scatterlist sg;
-	struct hash_desc desc = {
-		.tfm = hash_tfm,
-		.flags = 0
-	};
+        if ((src == NULL) || (dst == NULL))
+                return -EINVAL;
 
-	spin_lock_irqsave(&fmp_tfm_lock, flag);
-	sg_init_one(&sg, (u8 *)src, len);
-
-	if (!desc.tfm) {
-		desc.tfm = crypto_alloc_hash(SHA256_HASH, 0,
-					     CRYPTO_ALG_ASYNC);
-		if (IS_ERR(desc.tfm)) {
-			printk(KERN_ERR "%s: Error attemping to allocate crypto context\n", __func__);
-			goto out;
-		}
-		hash_tfm = desc.tfm;
-	}
-
-	ret = crypto_hash_init(&desc);
-	if (ret) {
-		printk(KERN_ERR
-		       "%s: Error initializing crypto hash; ret = [%d]\n",
-		       __func__, ret);
-		goto out;
-	}
-	ret = crypto_hash_update(&desc, &sg, len);
-	if (ret) {
-		printk(KERN_ERR
-		       "%s: Error updating crypto hash; ret = [%d]\n",
-		       __func__, ret);
-		goto out;
-	}
-	ret = crypto_hash_final(&desc, dst);
-	if (ret) {
-		printk(KERN_ERR
-		       "%s: Error finalizing crypto hash; ret = [%d]\n",
-		       __func__, ret);
-		goto out;
-	}
-
-out:
-	spin_unlock_irqrestore(&fmp_tfm_lock, flag);
-	return ret;
+        if (SHA256(src, len, dst))
+                return 0;
+        else
+                return -1;
 }
+#endif
 
 int calculate_md5(struct crypto_hash *hash_tfm, char *dst, char *src, int len)
 {

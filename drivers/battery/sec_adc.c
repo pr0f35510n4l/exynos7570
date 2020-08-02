@@ -12,11 +12,37 @@
 
 #include <linux/battery/sec_adc.h>
 
-static struct iio_channel *temp_adc;
+struct adc_list {
+	const char*	name;
+	struct iio_channel *channel;
+	bool is_used;
+};
+
+static struct adc_list batt_adc_list[] = {
+	{.name = "adc-cable"},
+	{.name = "adc-bat"},
+	{.name = "adc-temp"},
+	{.name = "adc-temp"},
+	{.name = "adc-full"},
+	{.name = "adc-volt"},
+	{.name = "adc-chg-temp"},
+	{.name = "adc-in-bat"},
+	{.name = "adc-dischg"},
+	{.name = "adc-dischg-ntc"},
+	{.name = "adc-wpc-temp"},
+	{.name = "adc-slave-chg-temp"},
+};
 
 static void sec_bat_adc_ap_init(struct platform_device *pdev)
 {
-	temp_adc = iio_channel_get_all(&pdev->dev);
+	int i = 0;
+	struct iio_channel *temp_adc;
+
+	for (i = 0; i < SEC_BAT_ADC_CHANNEL_NUM; i++) {
+		temp_adc = iio_channel_get(&pdev->dev, batt_adc_list[i].name);
+		batt_adc_list[i].channel = temp_adc;
+		batt_adc_list[i].is_used = !IS_ERR_OR_NULL(temp_adc);
+	}
 }
 
 static int sec_bat_adc_ap_read(int channel)
@@ -24,60 +50,20 @@ static int sec_bat_adc_ap_read(int channel)
 	int data = -1;
 	int ret = 0;
 
-	switch (channel)
-	{
-	case SEC_BAT_ADC_CHANNEL_CABLE_CHECK:
-	case SEC_BAT_ADC_CHANNEL_BAT_CHECK:
-		break;
-	case SEC_BAT_ADC_CHANNEL_TEMP:
-	case SEC_BAT_ADC_CHANNEL_TEMP_AMBIENT:
-		ret = iio_read_channel_raw(&temp_adc[0], &data);
-		if (ret < 0)
-			pr_info("read channel error[%d]\n", ret);
-		else
-			pr_debug("TEMP ADC(%d)\n", data);
-		break;
-	case SEC_BAT_ADC_CHANNEL_FULL_CHECK:
-	case SEC_BAT_ADC_CHANNEL_VOLTAGE_NOW:
-	case SEC_BAT_ADC_CHANNEL_NUM:
-		break;
-	case SEC_BAT_ADC_CHANNEL_CHG_TEMP:
-		ret = iio_read_channel_raw(&temp_adc[1], &data);
-		if (ret < 0)
-			pr_info("read channel error[%d]\n", ret);
-		else
-			pr_debug("TEMP ADC(%d)\n", data);
-		break;
-	case SEC_BAT_ADC_CHANNEL_INBAT_VOLTAGE:
-		ret = iio_read_channel_raw(&temp_adc[2], &data);
-		if (ret < 0)
-			pr_info("read channel error[%d]\n", ret);
-		else
-			pr_debug("INBAT ADC(%d)\n", data);
-		break;
-	case SEC_BAT_ADC_CHANNEL_DISCHARGING_CHECK:
-		ret = iio_read_channel_raw(&temp_adc[3], &data);
-		if (ret < 0)
-			pr_info("read channel error[%d]\n", ret);
-		else
-			pr_debug("DISCHARGING CHECK(%d)\n", data);
-		break;
-	case SEC_BAT_ADC_CHANNEL_DISCHARGING_NTC:
-		ret = iio_read_channel_raw(&temp_adc[4], &data);
-		if (ret < 0)
-			pr_info("read channel error[%d]\n", ret);
-		else
-			pr_debug("DISCHARGING NTC(%d)\n", data);
-		break;
-	default:
-		break;
-	}
+	ret = (batt_adc_list[channel].is_used) ?
+		iio_read_channel_raw(batt_adc_list[channel].channel, &data) : 0;
+
 	return data;
 }
 
 static void sec_bat_adc_ap_exit(void)
 {
-	iio_channel_release(temp_adc);
+	int i = 0;
+	for (i = 0; i < SEC_BAT_ADC_CHANNEL_NUM; i++) {
+		if (batt_adc_list[i].is_used) {
+			iio_channel_release(batt_adc_list[i].channel);
+		}
+	}
 }
 
 static void sec_bat_adc_none_init(struct platform_device *pdev)

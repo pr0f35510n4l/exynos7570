@@ -135,7 +135,11 @@ int csi_hw_s_lane(u32 __iomem *base_reg,
 	pixelformat = image->format.pixelformat;
 
 	/* lane number */
-	val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_LANE_NUMBER], lanes);
+	if (CSIS_V4_2 == fimc_is_hw_get_reg(base_reg, &csi_regs[CSIS_R_CSIS_VERSION]))
+		/* MIPI CSI V4.2 support only 2 or 4 lane */
+		val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_LANE_NUMBER], lanes | (1 << 0));
+	else
+		val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_LANE_NUMBER], lanes);
 
 	/* deskew enable (only over than 1.5Gbps) */
 	if (mipi_speed > 1500) {
@@ -271,9 +275,7 @@ int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 channel, struct fimc_is_image
 	u32 val;
 	u32 dma_dim = 0;
 	u32 dma_pack12 = 0;
-	u32 dma_dump =0;
-	bool byte_swap = false;
-	
+
 	if (channel > CSI_VIRTUAL_CH_3) {
 		err("invalid channel(%d)", channel);
 		ret = -EINVAL;
@@ -290,29 +292,16 @@ int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 channel, struct fimc_is_image
 	case V4L2_PIX_FMT_SGRBG8:
 	case V4L2_PIX_FMT_SBGGR8:
 		dma_dim = CSIS_REG_DMA_1D_DMA;
-		dma_dump = CSIS_REG_DMA_NORMAL;
-		byte_swap = false;
-		break;
-	case V4L2_PIX_FMT_YUYV:
-		dma_dim = CSIS_REG_DMA_2D_DMA;
-		dma_dump = CSIS_REG_DMA_NORMAL;
-		byte_swap = true;
 		break;
 	default:
 		dma_dim = CSIS_REG_DMA_2D_DMA;
-		dma_dump = CSIS_REG_DMA_NORMAL;
-		byte_swap = false;
 		break;
 	}
 
 	val = fimc_is_hw_get_reg(base_reg, &csi_regs[CSIS_R_DMA0_FMT + (channel * 15)]);
 	val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_DMA_N_DIM], dma_dim);
 	val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_DMA_N_PACK12], dma_pack12);
-	val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_DMA_N_DUMP], dma_dump);
-	val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_DMA_N_BYTESWAP], byte_swap);
 	fimc_is_hw_set_reg(base_reg, &csi_regs[CSIS_R_DMA0_FMT + (channel * 15)], val);
-
-	//err("[MMKIM_TEST] CSIS_R_DMA0_FMT (0x%08x)", val);
 
 p_err:
 	return ret;
@@ -499,7 +488,6 @@ void csi_hw_s_output_dma(u32 __iomem *base_reg, u32 vc, bool enable)
 	val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_DMA_N_DISABLE], !enable);
 	val = fimc_is_hw_set_field_value(val, &csi_fields[CSIS_F_DMA_N_UPDT_PTR_EN], enable);
 	fimc_is_hw_set_reg(base_reg, &csi_regs[CSIS_R_DMA0_CTRL + (vc * 15)], val);
-	//err("[MMKIM_TEST] CSIS_R_DMA0_CTRL (0x%08x)", val);
 }
 
 bool csi_hw_g_output_dma_enable(u32 __iomem *base_reg, u32 vc)

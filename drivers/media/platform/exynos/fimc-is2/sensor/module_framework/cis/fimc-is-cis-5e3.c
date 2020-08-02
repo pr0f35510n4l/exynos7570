@@ -41,6 +41,7 @@
 #include "fimc-is-cis-5e3-setB.h"
 
 #include "fimc-is-helper-i2c.h"
+#include "fimc-is-vender-specific.h"
 
 #define SENSOR_NAME "S5K5E3"
 
@@ -161,6 +162,12 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 	struct i2c_client *client = NULL;
 	u8 selected_page;
 	u16 data16[4];
+	u8 cal_map_ver[4];
+	bool skip_cal_write = false;
+#endif
+#ifdef USE_CAMERA_HW_BIG_DATA
+	struct cam_hw_param *hw_param = NULL;
+	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 #endif
 
 	setinfo.param = NULL;
@@ -190,6 +197,15 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 
 	ret = sensor_cis_check_rev(cis);
 	if (ret < 0) {
+#ifdef USE_CAMERA_HW_BIG_DATA
+		sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
+		if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
+			fimc_is_sec_get_rear_hw_param(&hw_param);
+		else if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
+			fimc_is_sec_get_front_hw_param(&hw_param);
+		if(hw_param)
+			hw_param->i2c_sensor_err_cnt++;
+#endif
 		warn("sensor_5e3_check_rev is fail when cis init");
 		cis->rev_flag = true;
 		ret = 0;
@@ -259,6 +275,29 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 	if (unlikely(ret))
 		err("failed to fimc_is_i2c_read (%d)\n", ret);
 
+	ret = fimc_is_sensor_read8(client, 0xA22, &cal_map_ver[0]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+	ret = fimc_is_sensor_read8(client, 0xA23, &cal_map_ver[1]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+	ret = fimc_is_sensor_read8(client, 0xA24, &cal_map_ver[2]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+	ret = fimc_is_sensor_read8(client, 0xA25, &cal_map_ver[3]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+
+	printk(KERN_INFO "5e3 cal map version %c %c %c %c \n",
+		cal_map_ver[0], cal_map_ver[1], cal_map_ver[2], cal_map_ver[3]);
+
+	if (cal_map_ver[0]!=0x56 || cal_map_ver[1]!= 0x30
+		|| cal_map_ver[2] != 0x30 || cal_map_ver[3] < 0x31) {
+		printk(KERN_INFO "5e3 cal map version 0x%x 0x%x 0x%x 0x%x \n",
+			cal_map_ver[0], cal_map_ver[1], cal_map_ver[2], cal_map_ver[3]);
+		skip_cal_write = true;
+	}
+
 	ret = fimc_is_sensor_write8(client, 0xA00, 0x04);
 	if (unlikely(ret))
 		err("failed to fimc_is_i2c_read (%d)\n", ret);
@@ -272,11 +311,13 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 	/* Write AWB Cal Data to sensor */
 	msleep(10);
 
-	ret = fimc_is_sensor_write16_array(client, 0x020E, data16, 4);
-	if (ret < 0) {
-		printk(KERN_INFO "fimc_is_sensor_write16_array fail\n");
-		ret = -EINVAL;
-		goto p_err;
+	if (skip_cal_write == false) {
+		ret = fimc_is_sensor_write16_array(client, 0x020E, data16, 4);
+		if (ret < 0) {
+			printk(KERN_INFO "fimc_is_sensor_write16_array fail\n");
+			ret = -EINVAL;
+			goto p_err;
+		}
 	}
 
 	cis->use_dgain = false;
@@ -1749,6 +1790,9 @@ int cis_5e3_probe(struct i2c_client *client,
 	char const *setfile;
 	struct device *dev;
 	struct device_node *dnode;
+#if defined(CONFIG_USE_DIRECT_IS_CONTROL) && defined(CONFIG_CAMERA_OTPROM_SUPPORT_FRONT)
+	struct fimc_is_vender_specific *specific = NULL;
+#endif
 
 	BUG_ON(!client);
 	BUG_ON(!fimc_is_dev);
@@ -1799,7 +1843,8 @@ int cis_5e3_probe(struct i2c_client *client,
 	cis->client = client;
 	sensor_peri->module->client = cis->client;
 #if defined(CONFIG_USE_DIRECT_IS_CONTROL) && defined(CONFIG_CAMERA_OTPROM_SUPPORT_FRONT)
-	core->front_cis_client = client;
+	specific = core->vender.private_data;
+	specific->front_cis_client = client;
 #endif
 
 	cis->cis_data = kzalloc(sizeof(cis_shared_data), GFP_KERNEL);
@@ -1887,6 +1932,7 @@ MODULE_DEVICE_TABLE(of, exynos_fimc_is_cis_5e3_match);
 
 static const struct i2c_device_id cis_5e3_idt[] = {
 	{ SENSOR_NAME, 0 },
+	{},
 };
 
 static struct i2c_driver cis_5e3_driver = {

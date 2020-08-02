@@ -27,11 +27,6 @@ $(CONFIG_SCSC_WLAN_MODULE)-y += ../cac.o
 $(CONFIG_SCSC_WLAN_MODULE)-y += ../ioctl.o
 $(CONFIG_SCSC_WLAN_MODULE)-y += ../wakelock.o
 
-# enable Oxygen
-ifeq ($(CONFIG_SCSC_WLAN_OXYGEN_ENABLE),y)
-$(CONFIG_SCSC_WLAN_MODULE)-y += ../oxygen_ioctl.o
-endif
-
 # enable GSCAN
 ifeq ($(CONFIG_SCSC_WLAN_GSCAN_ENABLE),y)
 $(CONFIG_SCSC_WLAN_MODULE)-y += ../nl80211_vendor.o
@@ -100,12 +95,6 @@ ccflags-y += -DCONFIG_SCSC_WLAN_MAX_INTERFACES=$(CONFIG_SCSC_WLAN_MAX_INTERFACES
 
 # Android specific build options
 ccflags-$(CONFIG_SCSC_WLAN_ANDROID) += -DCONFIG_SCSC_WLAN_ANDROID
-
-# enable Oxygen
-ifeq ($(CONFIG_SCSC_WLAN_OXYGEN_ENABLE),y)
-ccflags-y += -DCONFIG_SCSC_WLAN_OXYGEN_ENABLE
-ccflags-y += -DCONFIG_SCSC_WLAN_OXYGEN_UT_EXCEPTION
-endif
 
 ccflags-y += -I$(src) -I$(src)/..
 ccflags-y += -I$(src)/../../../../../include -I$(src)/../../../../../include/scsc

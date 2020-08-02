@@ -59,6 +59,7 @@ struct mxman {
 	struct wake_lock	recovery_wake_lock;
 	u32			rf_hw_ver;
 	u16			scsc_panic_code;
+	u64 		last_panic_time;
 };
 
 void mxman_register_gdb_channel(struct scsc_mx *mx, mxmgmt_channel_handler handler, void *data);

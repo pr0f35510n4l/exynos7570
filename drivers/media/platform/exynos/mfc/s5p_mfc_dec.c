@@ -1188,26 +1188,23 @@ static int vidioc_querybuf(struct file *file, void *priv,
 
 extern int no_order;
 /* Queue a buffer */
-static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *userbuf)
+static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
 	struct s5p_mfc_ctx *ctx = fh_to_mfc_ctx(file->private_data);
 	struct s5p_mfc_dec *dec = ctx->dec_priv;
-	struct v4l2_buffer localbuf, *buf;
 	int ret = -EINVAL;
 
 	mfc_debug_enter();
 
-	mfc_debug(2, "Enqueued buf: %d, (type = %d)\n", userbuf->index, userbuf->type);
+	mfc_debug(2, "Enqueued buf: %d, (type = %d)\n", buf->index, buf->type);
 	if (ctx->state == MFCINST_ERROR) {
 		mfc_err_ctx("Call on QBUF after unrecoverable error.\n");
 		return -EIO;
 	}
 
-	buf = &localbuf;
-	ret = copy_from_user(buf, userbuf, sizeof(localbuf));
-	if(ret) {
-		mfc_err_ctx("Fail to copy data from user space to kernel space\n");
-		return -EINVAL;
+	if (V4L2_TYPE_IS_MULTIPLANAR(buf->type) && !buf->length) {
+		mfc_err_ctx("multiplanar but length is zero\n");
+		return -EIO;
 	}
 
 	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -1265,18 +1262,17 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 		mfc_err_ctx("Call on DQBUF after unrecoverable error.\n");
 		return -EIO;
 	}
-
 	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		ret = vb2_dqbuf(&ctx->vq_src, buf, file->f_flags & O_NONBLOCK);
 	} else {
 		ret = vb2_dqbuf(&ctx->vq_dst, buf, file->f_flags & O_NONBLOCK);
 
-		if (buf->index < 0 || buf->index >= MFC_MAX_BUFFERS) {
-			mfc_err_ctx("Buffer index rang over. Current index is %d\n", buf->index);
+		/* Memcpy from dec->ref_info to shared memory */
+		if (buf->index >= MFC_MAX_DPBS) {
+			mfc_err_ctx("buffer index[%d] range over\n", buf->index);
 			return -EINVAL;
 		}
 
-		/* Memcpy from dec->ref_info to shared memory */
 		srcBuf = &dec->ref_info[buf->index];
 		for (ncount = 0; ncount < MFC_MAX_DPBS; ncount++) {
 			if (srcBuf->dpb[ncount].fd[0] == MFC_INFO_INIT_FD)

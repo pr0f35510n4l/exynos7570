@@ -98,7 +98,7 @@ static int s5p_mfc_init_decode(struct s5p_mfc_ctx *ctx)
 
 	/* conceal control to specific color */
 	if (FW_HAS_CONCEAL_CONTROL(dev))
-		reg |= (0x3 << S5P_FIMV_D_OPT_CONCEAL_CONTROL);
+		reg |= (0x4 << S5P_FIMV_D_OPT_CONCEAL_CONTROL);
 
 	MFC_WRITEL(reg, S5P_FIMV_D_DEC_OPTIONS);
 
@@ -150,6 +150,7 @@ static int s5p_mfc_init_decode(struct s5p_mfc_ctx *ctx)
 	/* Enable realloc interface if SEI is enabled */
 	if (dec->sei_parse && FW_HAS_SEI_S3D_REALLOC(dev))
 		reg |= (0x1 << S5P_FIMV_D_SEI_NEED_INIT_BUFFER_SHIFT);
+  reg |= (0x1 << S5P_FIMV_D_SEI_RECOVERY_PARSING_ENABLE);		
 	MFC_WRITEL(reg, S5P_FIMV_D_SEI_ENABLE);
 
 	MFC_WRITEL(ctx->inst_no, S5P_FIMV_INSTANCE_ID);

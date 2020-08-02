@@ -498,7 +498,7 @@ unsigned long fimc_is_group_lock(struct fimc_is_group *group,
 		bool leader_lock)
 {
 	u32 entry;
-	unsigned long flags;
+	unsigned long flags = 0;
 	struct fimc_is_subdev *subdev;
 	struct fimc_is_framemgr *ldr_framemgr, *sub_framemgr;
 
@@ -826,12 +826,42 @@ static void fimc_is_group_debug_aa_done(struct fimc_is_group *group,
 static void fimc_is_group_set_torch(struct fimc_is_group *group,
 	struct fimc_is_frame *ldr_frame)
 {
+	struct fimc_is_device_ischain *device = group->device;
+#if defined(CONFIG_LEDS_KTD2692) && defined(CONFIG_LEDS_SUPPORT_FRONT_FLASH)
+	int ret = 0;
+	struct fimc_is_device_sensor *sensor;
+	struct fimc_is_module_enum *module;
+#endif
+	
 	if (group->prev)
 		return;
 
+	if (test_bit(FIMC_IS_ISCHAIN_REPROCESSING, &device->state))
+		return;	
+
+#if defined(CONFIG_LEDS_KTD2692) && defined(CONFIG_LEDS_SUPPORT_FRONT_FLASH)
+
+	sensor = device->sensor;
+
+	ret = fimc_is_sensor_g_module(sensor, &module);
+	if (ret) {
+		err("fimc_is_sensor_g_module is fail(%d)", ret);
+		return;
+	}
+	
+	if (module->position != SENSOR_POSITION_FRONT) {
+		return;
+	}
+#endif
+
 	if (group->aeflashMode != ldr_frame->shot->ctl.aa.vendor_aeflashMode) {
 		group->aeflashMode = ldr_frame->shot->ctl.aa.vendor_aeflashMode;
+#ifdef CONFIG_LEDS_SUPPORT_FRONT_FLASH_AUTO
+		group->frontFlashMode = ldr_frame->shot->ctl.flash.flashMode;
+		fimc_is_vender_set_torch(group->aeflashMode, group->frontFlashMode);
+#else
 		fimc_is_vender_set_torch(group->aeflashMode);
+#endif
 	}
 
 	return;
@@ -914,7 +944,9 @@ static int fimc_is_group_task_start(struct fimc_is_groupmgr *groupmgr,
 	}
 
 #ifndef ENABLE_IS_CORE
-	fpsimd_set_as_user(gtask->task);
+#ifdef ENABLE_FPSIMD_FOR_USER
+	fpsimd_set_task_using(gtask->task);
+#endif
 #ifdef SET_CPU_AFFINITY
 	ret = set_cpus_allowed_ptr(gtask->task, cpumask_of(2));
 #endif
@@ -2030,7 +2062,8 @@ int fimc_is_group_stop(struct fimc_is_groupmgr *groupmgr,
 		goto p_err;
 	}
 
-	if (!test_bit(FIMC_IS_GROUP_START, &group->state)) {
+	if (!test_bit(FIMC_IS_GROUP_START, &group->state) &&
+			!test_bit(FIMC_IS_GROUP_START, &group->head->state)) {
 		mwarn("already group stop", group);
 		goto p_err;
 	}

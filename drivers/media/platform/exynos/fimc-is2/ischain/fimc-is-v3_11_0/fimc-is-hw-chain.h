@@ -11,6 +11,9 @@
 #ifndef FIMC_IS_HW_CHAIN_V3_11_H
 #define FIMC_IS_HW_CHAIN_V3_11_H
 
+#include "fimc-is-groupmgr.h"
+#include "fimc-is-config.h"
+
 #define GROUP_HW_MAX	(GROUP_SLOT_MAX)
 
 #define IORESOURCE_ISP		0

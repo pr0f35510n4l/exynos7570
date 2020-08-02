@@ -43,6 +43,11 @@ static int fimc_is_hw_mcsc_handle_interrupt(u32 id, void *context)
 
 	fimc_is_scaler_clear_intr_src(hw_ip->regs, hw_ip->id, status);
 
+	if (!test_bit(HW_RUN, &hw_ip->state)) {
+		err_hw("[MCSC]HW disabled!! interrupt(0x%x)", status);
+		goto p_err;
+	}
+
 	if (status & (1 << INTR_MC_SCALER_OVERFLOW)) {
 		err_hw("[MCSC]Overflow!! (0x%x)", status);
 		err_intr_flag = true;
@@ -146,6 +151,7 @@ static int fimc_is_hw_mcsc_handle_interrupt(u32 id, void *context)
 	if (status & (1 << INTR_MC_SCALER_FRAME_END))
 		CALL_HW_OPS(hw_ip, clk_gate, instance, false, false);
 
+p_err:
 	return ret;
 }
 
@@ -636,11 +642,6 @@ config:
 	if (start_flag) {
 		dbg_hw("[%d][ID:%d]mcsc_start [F:%d]\n", instance, hw_ip->id, frame->fcount);
 		fimc_is_scaler_start(hw_ip->regs, hw_ip->id);
-		if (ret) {
-			err_hw("[%d][ID:%d]mcsc_start failed!!\n",
-				instance, hw_ip->id);
-			return -EINVAL;
-		}
 	}
 
 	dbg_hw("[%d][ID:%d]mcsc_shot: hw_mcsc_out_configured[0x%lx]\n", instance, hw_ip->id,
@@ -1602,6 +1603,10 @@ int fimc_is_hw_mcsc_output_yuvrange(struct fimc_is_hw_ip *hw_ip, struct param_mc
 			contents.c_gain10, contents.c_gain11);
 		dbg_hw("[%d][ID:%d] set YUV range(%d) by setfile parameter\n",
 			instance, hw_ip->id, yuv_range);
+		info_hw("[Y:offset(%d),gain(%d)][C:gain00(%d),01(%d),10(%d),11(%d)]\n",
+			contents.y_offset, contents.y_gain,
+			contents.c_gain00, contents.c_gain01,
+			contents.c_gain10, contents.c_gain11);
 	} else {
 		if (yuv_range == SCALER_OUTPUT_YUV_RANGE_FULL) {
 			/* Y range - [0:255], U/V range - [0:255] */
@@ -1617,10 +1622,6 @@ int fimc_is_hw_mcsc_output_yuvrange(struct fimc_is_hw_ip *hw_ip, struct param_mc
 	}
 	info_hw("[%d][OUT:%d]hw_mcsc_output_yuv_setting: yuv_range(%d), cmd(O:%d,D:%d)\n",
 		instance, output_id, yuv_range, output->otf_cmd, output->dma_cmd);
-	info_hw("[Y:offset(%d),gain(%d)][C:gain00(%d),01(%d),10(%d),11(%d)]\n",
-		contents.y_offset, contents.y_gain,
-		contents.c_gain00, contents.c_gain01,
-		contents.c_gain10, contents.c_gain11);
 
 	return ret;
 }
@@ -1916,11 +1917,13 @@ void fimc_is_hw_mcsc_size_dump(struct fimc_is_hw_ip *hw_ip)
 	u32 wdma_w, wdma_h = 0;
 	u32 rdma_y_stride, rdma_uv_stride = 0;
 	u32 wdma_y_stride, wdma_uv_stride = 0;
-	struct fimc_is_hw_mcsc_cap *cap = GET_MCSC_HW_CAP(hw_ip);
+	struct fimc_is_hw_mcsc_cap *cap = NULL;
 
 	/* skip size dump, if hw_ip wasn't opened */
 	if (!(hw_ip && test_bit(HW_OPEN, &hw_ip->state)))
 		return;
+
+	cap = GET_MCSC_HW_CAP(hw_ip);
 
 	BUG_ON(!cap);
 

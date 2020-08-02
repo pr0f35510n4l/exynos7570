@@ -220,6 +220,7 @@ void fimc_is_hardware_flush_frame(struct fimc_is_hw_ip *hw_ip,
 	struct fimc_is_framemgr *framemgr;
 	struct fimc_is_frame *frame;
 	ulong flags;
+	int retry;
 
 	BUG_ON(!hw_ip);
 
@@ -237,7 +238,8 @@ void fimc_is_hardware_flush_frame(struct fimc_is_hw_ip *hw_ip,
 	frame = peek_frame(framemgr, FS_HW_WAIT_DONE);
 	framemgr_x_barrier_irqr(framemgr, 0, flags);
 
-	while (frame) {
+	retry = FIMC_IS_MAX_HW_FRAME;	
+	while (frame && retry--) {
 		if (done_type == IS_SHOT_TIMEOUT) {
 			err_hw("[ID:%d]hardware is timeout\n", hw_ip->id);
 			fimc_is_hardware_size_dump(hw_ip);
@@ -252,6 +254,9 @@ void fimc_is_hardware_flush_frame(struct fimc_is_hw_ip *hw_ip,
 		frame = peek_frame(framemgr, FS_HW_WAIT_DONE);
 		framemgr_x_barrier_irqr(framemgr, 0, flags);
 	}
+
+	if (retry == 0)
+		err_hw("frame flush is not completed");
 }
 
 u32 get_hw_id_from_group(u32 group_id)
@@ -1378,6 +1383,10 @@ void fimc_is_hardware_process_stop(struct fimc_is_hardware *hardware, u32 instan
 	framemgr = hw_ip->framemgr;
 	BUG_ON(!framemgr);
 
+	/* reset shot timer after force stop */
+	del_timer_sync(&hw_ip->shot_timer);
+	setup_timer(&hw_ip->shot_timer, fimc_is_hardware_shot_timer, (unsigned long)hw_ip);
+
 	retry = 50;
 	while (--retry && framemgr->queued_count[FS_HW_WAIT_DONE]) {
 		warn_hw("[%d][ID:%d]HW_WAIT_DONE(%d) com waiting...", instance, hw_ip->id,
@@ -1433,10 +1442,6 @@ void fimc_is_hardware_process_stop(struct fimc_is_hardware *hardware, u32 instan
 	fimc_is_hardware_force_stop(hardware, hw_ip, instance);
 	CALL_HW_OPS(hw_ip, clk_gate, instance, false, false);
 	atomic_set(&hw_ip->status.otf_start, 0);
-
-	/* reset shot timer after force stop */
-	del_timer_sync(&hw_ip->shot_timer);
-	setup_timer(&hw_ip->shot_timer, fimc_is_hardware_shot_timer, (unsigned long)hw_ip);
 
 	return;
 }
@@ -1637,34 +1642,33 @@ retry:
 	return ret;
 }
 
-int check_core_end(struct fimc_is_hw_ip *hw_ip, u32 hw_fcount,
+static int check_frame_end(struct fimc_is_hw_ip *hw_ip, u32 hw_fcount,
 	struct fimc_is_frame **in_frame, struct fimc_is_framemgr *framemgr,
 	u32 output_id, enum ShotErrorType done_type)
 {
 	int ret = 0;
 	struct fimc_is_frame *frame = *in_frame;
+	char *type = (output_id == FIMC_IS_HW_CORE_END) ? "CORE" : "FRAM";
 
 	BUG_ON(!hw_ip);
 	BUG_ON(!frame);
 	BUG_ON(!framemgr);
 
-	if (frame->fcount != hw_fcount) {
-		if ((hw_ip->is_leader) && (hw_fcount - frame->fcount >= 2)) {
-			dbg_hw("[%d]LATE  CORE END [ID:%d][F:%d][0x%x][C:0x%lx]" \
-				"[O:0x%lx][END:%d]\n",
-				frame->instance, hw_ip->id, frame->fcount,
-				output_id, frame->core_flag, frame->out_flag,
-				hw_fcount);
+	if (hw_fcount > frame->fcount) {
+		dbg_hw("[%d]LATE %s END [ID:%d][F:%d][0x%x][C:0x%lx]" \
+			"[O:0x%lx][END:%d]\n",
+			frame->instance, type, hw_ip->id, frame->fcount,
+			output_id, frame->core_flag, frame->out_flag,
+			hw_fcount);
 
-			info_hw("%d: force_done for LATE FRAME [ID:%d][F:%d]\n",
-				__LINE__, hw_ip->id, frame->fcount);
-			ret = fimc_is_hardware_frame_ndone(hw_ip, frame,
-					frame->instance, IS_SHOT_UNPROCESSED);
-			if (ret) {
-				err_hw("[%d]hardware_frame_ndone fail (%d)",
-					frame->instance, hw_ip->id);
-				return -EINVAL;
-			}
+		info_hw("%d: force_done for LATE %s END [ID:%d][F:%d][HWF:%d]\n",
+			__LINE__, type, hw_ip->id, frame->fcount, hw_fcount);
+		ret = fimc_is_hardware_frame_ndone(hw_ip, frame,
+				frame->instance, IS_SHOT_UNPROCESSED);
+		if (ret) {
+			err_hw("[%d]hardware_frame_ndone fail (%d)",
+				frame->instance, hw_ip->id);
+			return -EINVAL;
 		}
 
 		framemgr_e_barrier(framemgr, 0);
@@ -1682,61 +1686,10 @@ int check_core_end(struct fimc_is_hw_ip *hw_ip, u32 hw_fcount,
 			framemgr_x_barrier(framemgr, 0);
 			return -EINVAL;
 		}
-
-		if (!test_bit_variables(hw_ip->id, &frame->core_flag)) {
-			info_hw("[%d]invalid core_flag [ID:%d][F:%d][0x%x][C:0x%lx]" \
-				"[O:0x%lx]",
-				frame->instance, hw_ip->id, frame->fcount,
-				output_id, frame->core_flag, frame->out_flag);
-			return -EINVAL;
-		}
-	} else {
-		dbg_hw("[ID:%d][%d,F:%d]FRAME COUNT invalid",
-			hw_ip->id, frame->fcount, hw_fcount);
-	}
-
-	return ret;
-}
-
-int check_frame_end(struct fimc_is_hw_ip *hw_ip, u32 hw_fcount,
-	struct fimc_is_frame **in_frame, struct fimc_is_framemgr *framemgr,
-	u32 output_id, enum ShotErrorType done_type)
-{
-	int ret = 0;
-	struct fimc_is_frame *frame = *in_frame;
-
-	BUG_ON(!hw_ip);
-	BUG_ON(!frame);
-	BUG_ON(!framemgr);
-
-	if (frame->fcount != hw_fcount) {
-		dbg_hw("[%d]LATE FRAME END [ID:%d][F:%d][0x%x][C:0x%lx][O:0x%lx]" \
-			"[END:%d]\n",
-			frame->instance, hw_ip->id, frame->fcount, output_id,
-			frame->core_flag, frame->out_flag, hw_fcount);
-
-		framemgr_e_barrier(framemgr, 0);
-		*in_frame = find_frame(framemgr, FS_HW_WAIT_DONE, frame_fcount,
-					(void *)(ulong)hw_fcount);
-		framemgr_x_barrier(framemgr, 0);
-		frame = *in_frame;
-		if (frame == NULL) {
-			err_hw("[ID:%d][F:%d]frame(null)!!(%d)", hw_ip->id,
-				hw_fcount, done_type);
-			framemgr_e_barrier(framemgr, 0);
-			frame_manager_print_info_queues(framemgr);
-			print_all_hw_frame_count(hw_ip->hardware);
-			framemgr_x_barrier(framemgr, 0);
-			return -EINVAL;
-		}
-
-		if (!test_bit_variables(output_id, &frame->out_flag)) {
-			info_hw("[%d]invalid output_id [ID:%d][F:%d][0x%x][C:0x%lx]" \
-				"[O:0x%lx]",
-				frame->instance, hw_ip->id, frame->fcount,
-				output_id, frame->core_flag, frame->out_flag);
-			return -EINVAL;
-		}
+	} else if (hw_fcount < frame->fcount) {
+		warn_hw("%s END is ignored [ID:%d][F:%d][HWF:%d]\n",
+			type, hw_ip->id, frame->fcount, hw_fcount);
+		return -EINVAL;
 	}
 
 	return ret;
@@ -1811,13 +1764,10 @@ int fimc_is_hardware_frame_done(struct fimc_is_hw_ip *hw_ip, struct fimc_is_fram
 	if (output_id == FIMC_IS_HW_CORE_END) {
 		switch (done_type) {
 		case IS_SHOT_SUCCESS:
-			if (!test_bit_variables(hw_ip->id, &frame->core_flag)) {
-				ret = check_core_end(hw_ip, atomic_read(&hw_ip->fcount), &frame,
-					framemgr, output_id, done_type);
-				if (ret)
-					return ret;
-
-			}
+			ret = check_frame_end(hw_ip, atomic_read(&hw_ip->fcount), &frame,
+				framemgr, output_id, done_type);
+			if (ret)
+				return ret;
 			break;
 		case IS_SHOT_UNPROCESSED:
 		case IS_SHOT_LATE_FRAME:
@@ -1827,10 +1777,16 @@ int fimc_is_hardware_frame_done(struct fimc_is_hw_ip *hw_ip, struct fimc_is_fram
 		case IS_SHOT_INVALID_FRAMENUMBER:
 		case IS_SHOT_OVERFLOW:
 		case IS_SHOT_TIMEOUT:
-			goto shot_done;
 			break;
 		default:
 			break;
+		}
+
+		if (!test_bit_variables(hw_ip->id, &frame->core_flag)) {
+			info_hw("[%d]invalid core_flag [ID:%d][F:%d][0x%x][C:0x%lx][O:0x%lx]",
+				frame->instance, hw_ip->id, frame->fcount,
+				output_id, frame->core_flag, frame->out_flag);
+			goto shot_done;
 		}
 
 		if (hw_ip->is_leader) {
@@ -1845,17 +1801,12 @@ int fimc_is_hardware_frame_done(struct fimc_is_hw_ip *hw_ip, struct fimc_is_fram
 
 		switch(done_type) {
 		case IS_SHOT_SUCCESS:
-			if (!test_bit_variables(output_id, &frame->out_flag)) {
-				ret = check_frame_end(hw_ip, atomic_read(&hw_ip->fcount), &frame,
-					framemgr, output_id, done_type);
-				if (ret)
-					return ret;
-			}
+			ret = check_frame_end(hw_ip, atomic_read(&hw_ip->fcount), &frame,
+				framemgr, output_id, done_type);
+			if (ret)
+				return ret;
 			break;
 		case IS_SHOT_UNPROCESSED:
-			if (!test_bit_variables(output_id, &frame->out_flag))
-				goto shot_done;
-			break;
 		case IS_SHOT_LATE_FRAME:
 		case IS_SHOT_UNKNOWN:
 		case IS_SHOT_BAD_FRAME:
@@ -1866,6 +1817,13 @@ int fimc_is_hardware_frame_done(struct fimc_is_hw_ip *hw_ip, struct fimc_is_fram
 			break;
 		default:
 			break;
+		}
+
+		if (!test_bit_variables(output_id, &frame->out_flag)) {
+			info_hw("[%d]invalid output_id [ID:%d][F:%d][0x%x][C:0x%lx][O:0x%lx]",
+				frame->instance, hw_ip->id, frame->fcount,
+				output_id, frame->core_flag, frame->out_flag);
+			goto shot_done;
 		}
 
 		ret = do_frame_done_work_func(hw_ip->itf,
@@ -2319,7 +2277,7 @@ int fimc_is_hardware_load_setfile(struct fimc_is_hardware *hardware, ulong addr,
 		return ret;
 	}
 
-	if (header.num_scenarios > FIMC_IS_MAX_SCENARIO) {
+	if (header.num_scenarios >= FIMC_IS_MAX_SCENARIO) {
 		err_hw("too many scenarios: %d", header.num_scenarios);
 		return -EINVAL;
 	}

@@ -274,7 +274,6 @@ struct s2mpw01_dev {
 	struct mutex irqlock;
 	int irq_masks_cur[S2MPW01_IRQ_GROUP_NR];
 	int irq_masks_cache[S2MPW01_IRQ_GROUP_NR];
-	bool topoff_mask_status;
 
 	/* pmic VER/REV register */
 	u8 pmic_rev;	/* pmic Rev */

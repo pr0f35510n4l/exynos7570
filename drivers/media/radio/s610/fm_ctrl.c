@@ -77,6 +77,10 @@ void wait_atomic(void)
 		if (!atomic_read(&gradio->is_doing))
 			break;
 		gradio->wait_atomic++;
+		if (gradio->wait_atomic > 0xffffff) {
+			gradio->wait_atomic = 0;
+			break;
+		}
 	}
 }
 
@@ -217,7 +221,7 @@ void fmspeedy_set_reg_core(u32 addr, u32 data)
 	fm_en_speedy_m_int();
 
 	if (ii > 4)
-		APIEBUG(gradio, "speedy_set_field write fail\n");
+		dev_err(gradio->dev, "speedy_set_field write fail\n");
 }
 
 void fmspeedy_set_reg(u32 addr, u32 data)
@@ -290,7 +294,7 @@ u32 fmspeedy_get_reg_field_core(u32 addr, u32 shift, u32 mask)
 					>> shift);
 		}
 	}
-	fm_dis_speedy_m_int();
+	fm_en_speedy_m_int();
 
 	return 0;
 }
@@ -368,7 +372,7 @@ void fmspeedy_set_reg_field_core(u32 addr, u32 shift, u32 mask, u32 data)
 
 	if ((ii > 4) || (jj > 99)) {
 		fm_en_speedy_m_int();
-		APIEBUG(gradio, "speedy_set_field write fail\n");
+		dev_err(gradio->dev, "speedy_set_field write fail\n");
 		return;
 	}
 
@@ -382,7 +386,7 @@ void fmspeedy_set_reg_field_core(u32 addr, u32 shift, u32 mask, u32 data)
 	value = (value1 & ~(mask)) | ((data) << (shift));
 
 	if (addr == 0xFFF2A9)
-		APIEBUG(gradio, "speedy read %x, %x\n", value1, value);
+		APIEBUG(gradio->dev, "speedy read %x, %x\n", value1, value);
 
 #endif
 
@@ -440,7 +444,7 @@ void fmspeedy_set_reg_field_core(u32 addr, u32 shift, u32 mask, u32 data)
 	fm_en_speedy_m_int();
 
 	if ((ii > 4) || (jj > 99))
-		APIEBUG(gradio, "speedy_set_field write fail\n");
+		dev_err(gradio->dev, "speedy_set_field write fail\n");
 }
 
 void fmspeedy_set_reg_field(u32 addr, u32 shift, u32 mask, u32 data)
@@ -461,6 +465,8 @@ u32 fmspeedy_get_reg_int_core(u32 addr)
 	u16 ii = 0, jj = 0;
 	u32 status1, status2;
 	u32 retval = 0;
+
+	fm_dis_speedy_m_int();
 
 	for (ii = 0; ii < 5; ii++) {
 		if ((read32(gradio->fmspeedy_base
@@ -510,6 +516,8 @@ u32 fmspeedy_get_reg_int_core(u32 addr)
 		}
 	}
 
+	fm_en_speedy_m_int();
+
 	return retval;
 }
 
@@ -532,6 +540,8 @@ void fmspeedy_set_reg_int_core(u32 addr, u32 data)
 {
 	u16 ii, jj;
 	u32 status1, status2;
+
+	fm_dis_speedy_m_int();
 
 	for (ii = 0; ii < 5; ii++) {
 		write32(gradio->fmspeedy_base + FMSPDY_DATA, data);
@@ -584,7 +594,9 @@ void fmspeedy_set_reg_int_core(u32 addr, u32 data)
 	}
 
 	if (ii > 4)
-		APIEBUG(gradio, "speedy_set retry fail\n");
+		dev_err(gradio->dev, "speedy_set retry fail\n");
+
+	fm_en_speedy_m_int();
 }
 
 void fmspeedy_set_reg_int(u32 addr, u32 data)

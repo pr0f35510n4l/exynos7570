@@ -24,12 +24,13 @@
 #define SLSI_GSCAN_MAX_EPNO_SSIDS                       (32)
 #define SLSI_GSCAN_MAX_EPNO_HS2_PARAM                   (8) /* Framework is not using this. Tune when needed */
 
-#define SLSI_REPORT_EVENTS_BUFFER_FULL                  (0)
+#define SLSI_REPORT_EVENTS_NONE                         (0)
 #define SLSI_REPORT_EVENTS_EACH_SCAN                    (1)
 #define SLSI_REPORT_EVENTS_FULL_RESULTS                 (2)
 #define SLSI_REPORT_EVENTS_NO_BATCH                 (4)
 
 #define SLSI_NL_ATTRIBUTE_U32_LEN                       (NLA_HDRLEN + 4)
+#define SLSI_NL_ATTRIBUTE_COUNTRY_CODE                  (4)
 #define SLSI_NL_VENDOR_ID_OVERHEAD                      SLSI_NL_ATTRIBUTE_U32_LEN
 #define SLSI_NL_VENDOR_SUBCMD_OVERHEAD                  SLSI_NL_ATTRIBUTE_U32_LEN
 #define SLSI_NL_VENDOR_DATA_OVERHEAD                    (NLA_HDRLEN)
@@ -105,6 +106,7 @@ enum GSCAN_ATTRIBUTE {
 	GSCAN_ATTRIBUTE_CHANNEL_LIST,
 	GSCAN_ATTRIBUTE_SCAN_ID,
 	GSCAN_ATTRIBUTE_SCAN_FLAGS,
+	GSCAN_ATTRIBUTE_SCAN_BUCKET_BIT,
 
 	/* remaining reserved for additional attributes */
 	GSCAN_ATTRIBUTE_SSID = 40,
@@ -182,8 +184,10 @@ enum wifi_band {
 };
 
 enum wifi_scan_event {
-	WIFI_SCAN_BUFFER_FULL,
-	WIFI_SCAN_COMPLETE,
+	WIFI_SCAN_RESULTS_AVAILABLE,
+	WIFI_SCAN_THRESHOLD_NUM_SCANS,
+	WIFI_SCAN_THRESHOLD_PERCENT,
+	WIFI_SCAN_FAILED,
 };
 
 enum wifi_mkeep_alive_attribute {
@@ -232,7 +236,8 @@ enum slsi_hal_vendor_subcmds {
 	SLSI_NL80211_VENDOR_SUBCMD_LSTATS_SUBCMD_SET_STATS,
 	SLSI_NL80211_VENDOR_SUBCMD_LSTATS_SUBCMD_GET_STATS,
 	SLSI_NL80211_VENDOR_SUBCMD_LSTATS_SUBCMD_CLEAR_STATS,
-	SLSI_NL80211_VENDOR_SUBCMD_GET_FEATURE_SET
+	SLSI_NL80211_VENDOR_SUBCMD_GET_FEATURE_SET,
+	SLSI_NL80211_VENDOR_SUBCMD_SET_COUNTRY_CODE
 };
 
 enum slsi_supp_vendor_subcmds {

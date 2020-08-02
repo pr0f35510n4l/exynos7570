@@ -244,8 +244,6 @@ struct s2mm001_muic_data {
 
 	struct delayed_work	init_work;
 	struct delayed_work	usb_work;
-
-	struct wake_lock	muic_wake_lock;
 };
 
 extern struct device *switch_device;

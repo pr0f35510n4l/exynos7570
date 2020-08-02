@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -63,26 +63,6 @@ enum slsi_ac_index_wmm_pe {
 /* Firmware transmit rates */
 #define SLSI_TX_RATE_NON_HT_1MBPS 0x4001
 #define SLSI_TX_RATE_NON_HT_6MBPS 0x4004
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-#define SLSI_TX_RATE_NON_HT_9MBPS    0x4005
-#define SLSI_TX_RATE_NON_HT_12MBPS   0x4007
-#define SLSI_TX_RATE_NON_HT_18MBPS   0x4008
-#define SLSI_TX_RATE_NON_HT_24MBPS   0x4009
-#define SLSI_TX_RATE_NON_HT_36MBPS   0x400A
-#define SLSI_TX_RATE_NON_HT_48MBPS   0x400B
-#define SLSI_TX_RATE_NON_HT_54MBPS   0x400C
-#define SLSI_TX_RATE_HT_65MBPS       0x8106 /* LDPC=0, STBC=0, SGI=1 */
-#define SLSI_TX_RATE_HT_72MBPS       0x8107 /* LDPC=0, STBC=0, SGI=1 */
-
-/* TODO:
- * Needs to be replaced with ZERO as specified in Oxygen spec
- * once the RMC auto rate function is supported later.
- */
-#define SLSI_IBSS_RMC_DEFAULT_TX_RATE    SLSI_TX_RATE_NON_HT_24MBPS
-#define SLSI_IBSS_RMC_LEADER "\x01\x00\x5E\x00\x02\x0A"
-
-#endif /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
-
 #define SLSI_ROAMING_CHANNELS_MAX 38
 
 #define SLSI_WLAN_EID_WAPI 68
@@ -164,7 +144,7 @@ int slsi_mlme_add_sched_scan(struct slsi_dev                    *sdev,
 			     const u8                           *ies,
 			     u16                                ies_len);
 
-int slsi_mlme_del_scan(struct slsi_dev *sdev, struct net_device *dev, u16 scan_id);
+int slsi_mlme_del_scan(struct slsi_dev *sdev, struct net_device *dev, u16 scan_id, bool scan_timed_out);
 int slsi_mlme_start(struct slsi_dev *sdev, struct net_device *dev, u8 *bssid, struct cfg80211_ap_settings *settings, const u8 *wpa_ie_pos, const u8 *wmm_ie_pos, bool append_vht_ies);
 int slsi_mlme_connect(struct slsi_dev *sdev, struct net_device *dev, struct cfg80211_connect_params *sme, struct ieee80211_channel *channel, const u8 *bssid);
 int slsi_mlme_set_key(struct slsi_dev *sdev, struct net_device *dev, u16 key_id, u16 key_type, const u8 *address, struct key_params *key);
@@ -206,7 +186,7 @@ void slsi_mlme_connect_resp(struct slsi_dev *sdev, struct net_device *dev);
 void slsi_mlme_connected_resp(struct slsi_dev *sdev, struct net_device *dev, u16 peer_index);
 void slsi_mlme_roamed_resp(struct slsi_dev *sdev, struct net_device *dev);
 int slsi_mlme_set_pmk(struct slsi_dev *sdev, struct net_device *dev, const u8 *pmk, u16 pmklen);
-int slsi_mlme_roam(struct slsi_dev *sdev, struct net_device *dev, u8 *bssid, u16 freq);
+int slsi_mlme_roam(struct slsi_dev *sdev, struct net_device *dev, const u8 *bssid, u16 freq);
 int slsi_mlme_set_cached_channels(struct slsi_dev *sdev, struct net_device *dev, u32 channels_count, u8 *channels);
 int slsi_mlme_tdls_peer_resp(struct slsi_dev *sdev, struct net_device *dev, u16 pid, u16 tdls_event);
 int slsi_mlme_tdls_action(struct slsi_dev *sdev, struct net_device *dev, const u8 *peer, int action, u16 center_freq, u16 chan_info);
@@ -216,13 +196,6 @@ int slsi_mlme_set_acl(struct slsi_dev *sdev, struct net_device *dev, u16 ifnum, 
 int slsi_mlme_set_traffic_parameters(struct slsi_dev *sdev, struct net_device *dev, u16 user_priority, u16 medium_time, u16 minimun_data_rate, u8 *mac);
 int slsi_mlme_del_traffic_parameters(struct slsi_dev *sdev, struct net_device *dev, u16 user_priority);
 int slsi_mlme_blockack_control_req(struct slsi_dev *sdev, struct net_device *dev, u16 blockack_control_bitmap, u16 direction, const u8 *peer_sta_address);
-
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-int slsi_mlme_start_ibss(struct slsi_dev *sdev, struct net_device *dev, const u8 *bssid, struct cfg80211_ibss_params *params);
-int slsi_mlme_ibss_get_sinfo_mib(struct slsi_dev *sdev, struct net_device *dev, struct slsi_peer *peer);
-int slsi_mlme_enable_ibss_rmc(struct slsi_dev *sdev, struct net_device *dev, const u8 *mcast_addr);
-int slsi_mlme_disable_ibss_rmc(struct slsi_dev *sdev, struct net_device *dev);
-#endif
 
 #ifdef CONFIG_SCSC_WLAN_GSCAN_ENABLE
 int slsi_mlme_significant_change_set(struct slsi_dev *sdev, struct net_device *dev, struct slsi_nl_significant_change_params *significant_param_ptr);

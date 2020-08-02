@@ -379,3 +379,4 @@ void mxlog_release(struct mxlog *mxlog)
 		mx140_release_file(mxlog->mx, mxlog->logstrings);
 	mxlog->logstrings = NULL;
 }
+

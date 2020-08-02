@@ -26,12 +26,6 @@
 #include "dw_mmc.h"
 #include "dw_mmc-pltfm.h"
 
-#ifdef CONFIG_BCMDHD_SDIO
-//for wlan
-struct platform_device *wifi_mmc_dev = NULL; 
-#endif
-
-
 static void dw_mci_pltfm_prepare_command(struct dw_mci *host, u32 *cmdr)
 {
 	*cmdr |= SDMMC_CMD_USE_HOLD_REG;
@@ -46,7 +40,6 @@ int dw_mci_pltfm_register(struct platform_device *pdev,
 {
 	struct dw_mci *host;
 	struct resource	*regs;
-	int ret;
 
 	host = devm_kzalloc(&pdev->dev, sizeof(struct dw_mci), GFP_KERNEL);
 	if (!host)
@@ -67,17 +60,7 @@ int dw_mci_pltfm_register(struct platform_device *pdev,
 		return PTR_ERR(host->regs);
 
 	platform_set_drvdata(pdev, host);
-	ret = dw_mci_probe(host);
-
-#ifdef CONFIG_BCMDHD_SDIO
-        // set for wlan
-        if (host->pdata->cd_type == DW_MCI_CD_EXTERNAL) {
-                pr_info ("%s: cd_type DW_MCI_CD_EXTERNAL\n", __func__);
-                wifi_mmc_dev = pdev;
-                printk("Murphy::: __%s__ wifi_mmc_dev->name = %s\n", __FUNCTION__, wifi_mmc_dev->name);
-        }
-#endif
-	return ret;
+	return dw_mci_probe(host);
 }
 EXPORT_SYMBOL_GPL(dw_mci_pltfm_register);
 

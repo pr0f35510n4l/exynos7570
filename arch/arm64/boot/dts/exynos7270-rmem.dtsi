@@ -29,26 +29,11 @@
 			compat-id = <25 31>;
 		};
 
-		wifibt_if {
-			compatible = "exynos,wifibt_if";
-			reg = <0 0x58800000 0x400000>;
-		};
-
-		gnss_if {
-			compatible = "exynos,gnss_if";
-			reg = <0 0x58C00000 0x200000>;
-		};
-
 		modem_if {
 			compatible = "exynos,modem_if";
 			reg = <0 0x59000000 0x5C00000>;
 			id = <0>;
 		};
 
-	};
-
-	ect {
-		parameter_address = <0x58EDA000>;
-		parameter_size = <0x6000>;
 	};
 };

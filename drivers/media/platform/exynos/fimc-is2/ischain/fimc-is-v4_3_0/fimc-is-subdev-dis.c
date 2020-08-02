@@ -47,11 +47,7 @@ static void fimc_is_ischain_dis_ctrl(struct fimc_is_device_ischain *device,
 #ifdef ENABLE_DNR
 		device->is_region->shared[350] = device->minfo->dvaddr_tpu;
 		control->buffer_number = SIZE_DNR_INTERNAL_BUF * NUM_DNR_INTERNAL_BUF;
-#ifdef ENABLE_IS_CORE
 		control->buffer_address = device->dvaddr_shared + 350 * 4;
-#else
-		control->buffer_address = device->minfo->dvaddr_tpu;
-#endif
 #else
 		control->buffer_number = 0;
 		control->buffer_address = 0;

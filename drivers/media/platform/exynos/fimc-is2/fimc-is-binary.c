@@ -209,7 +209,7 @@ int request_binary(struct fimc_is_binary *bin, const char *path,
 	do {
 		ret = request_firmware(&bin->fw, name, device);
 
-		if (!ret) {
+		if (!ret && bin->fw) {
 			bin->data = (void *)bin->fw->data;
 			bin->size = bin->fw->size;
 

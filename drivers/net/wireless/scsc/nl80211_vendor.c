@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2014 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2014 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 #include <linux/version.h>
@@ -14,7 +14,6 @@
 #include "netif.h"
 #include "unifiio.h"
 #include "mib.h"
-#include "oxygen_ioctl.h"
 #include "nl80211_vendor.h"
 
 #define SLSI_GSCAN_INVALID_RSSI        0x7FFF
@@ -632,7 +631,7 @@ void slsi_gscan_handle_scan_result(struct slsi_dev *sdev, struct net_device *dev
 	struct netdev_vif        *ndev_vif = netdev_priv(dev);
 	struct slsi_bucket       *bucket;
 	u16                      bucket_index;
-	int                      event_type;
+	int                      event_type = WIFI_SCAN_FAILED;
 	u16                      anqp_length;
 	int                      hs2_network_id;
 
@@ -660,12 +659,15 @@ void slsi_gscan_handle_scan_result(struct slsi_dev *sdev, struct net_device *dev
 		SLSI_NET_DBG3(dev, SLSI_GSCAN, "scan done, scan_cycle = %d, num_scans = %d\n",
 			      bucket->scan_cycle, bucket->gscan->num_scans);
 
-		if ((bucket->report_events & SLSI_REPORT_EVENTS_EACH_SCAN) ||
-		    (bucket->gscan->num_scans % bucket->gscan->report_threshold_num_scans == 0) ||
-		    (bucket->report_events & SLSI_REPORT_EVENTS_FULL_RESULTS)) {
-			event_type = WIFI_SCAN_COMPLETE;
+		if (bucket->report_events & SLSI_REPORT_EVENTS_EACH_SCAN)
+			event_type = WIFI_SCAN_RESULTS_AVAILABLE;
+		if (bucket->gscan->num_scans % bucket->gscan->report_threshold_num_scans == 0)
+			event_type = WIFI_SCAN_THRESHOLD_NUM_SCANS;
+		if (sdev->buffer_consumed >= sdev->buffer_threshold)
+			event_type = WIFI_SCAN_THRESHOLD_PERCENT;
+
+		if (event_type != WIFI_SCAN_FAILED)
 			slsi_vendor_event(sdev, SLSI_NL80211_SCAN_EVENT, &event_type, sizeof(event_type));
-		}
 
 		goto out;
 	}
@@ -693,23 +695,30 @@ void slsi_gscan_handle_scan_result(struct slsi_dev *sdev, struct net_device *dev
 	}
 
 	if (bucket->report_events & SLSI_REPORT_EVENTS_FULL_RESULTS) {
-		SLSI_NET_DBG3(dev, SLSI_GSCAN, "report_events: SLSI_REPORT_EVENTS_FULL_RESULTS\n");
+		struct sk_buff *nlevent;
 
-		/* forward scan results (beacons/probe responses + IEs) in real time to HAL */
-		slsi_vendor_event(sdev, SLSI_NL80211_FULL_SCAN_RESULT_EVENT,
-				  &scan_res->nl_scan_res, scan_res->scan_res_len);
+		SLSI_NET_DBG3(dev, SLSI_GSCAN, "report_events: SLSI_REPORT_EVENTS_FULL_RESULTS\n");
+		nlevent = cfg80211_vendor_event_alloc(sdev->wiphy, scan_res->scan_res_len + 4, SLSI_NL80211_FULL_SCAN_RESULT_EVENT, GFP_KERNEL);
+		if (!nlevent) {
+			SLSI_ERR(sdev, "failed to allocate sbk of size:%d\n", scan_res->scan_res_len + 4);
+			kfree(scan_res);
+			goto out;
+		}
+		if (nla_put_u32(nlevent, GSCAN_ATTRIBUTE_SCAN_BUCKET_BIT, (1 << bucket_index)) ||
+		    nla_put(nlevent, GSCAN_ATTRIBUTE_SCAN_RESULTS, scan_res->scan_res_len, &scan_res->nl_scan_res)) {
+			SLSI_ERR(sdev, "failed to put data\n");
+			kfree_skb(nlevent);
+			kfree(scan_res);
+			goto out;
+		}
+		cfg80211_vendor_event(nlevent, GFP_KERNEL);
 	}
 
 	if (slsi_check_scan_result(sdev, bucket, scan_res) == SLSI_DISCARD_SCAN_RESULT) {
 		kfree(scan_res);
 		goto out;
-	}
+	 }
 	slsi_gscan_hash_add(sdev, scan_res);
-
-	if (sdev->buffer_consumed >= sdev->buffer_threshold) {
-		event_type = WIFI_SCAN_BUFFER_FULL;
-		slsi_vendor_event(sdev, SLSI_NL80211_SCAN_RESULTS_AVAILABLE_EVENT, &event_type, sizeof(event_type));
-	}
 
 out:
 	slsi_kfree_skb(skb);
@@ -1008,7 +1017,7 @@ static int slsi_gscan_add_mlme(struct slsi_dev *sdev, struct slsi_nl_gscan_param
 		gscan_param.bucket = gscan->bucket[i];
 
 		switch (gscan_param.bucket->report_events) {
-		case SLSI_REPORT_EVENTS_BUFFER_FULL:
+		case SLSI_REPORT_EVENTS_NONE:
 		case SLSI_REPORT_EVENTS_EACH_SCAN:
 		case SLSI_REPORT_EVENTS_FULL_RESULTS:
 			report_mode = 1 << gscan_param.bucket->report_events;
@@ -1042,7 +1051,7 @@ static int slsi_gscan_add_mlme(struct slsi_dev *sdev, struct slsi_nl_gscan_param
 
 			/* Delete the scan those are already added */
 			for (i = (i - 1); i >= 0; i--)
-				slsi_mlme_del_scan(sdev, dev, gscan->bucket[i]->scan_id);
+				slsi_mlme_del_scan(sdev, dev, gscan->bucket[i]->scan_id, false);
 			break;
 		}
 	}
@@ -1064,6 +1073,9 @@ static int slsi_gscan_add(struct wiphy *wiphy, struct wireless_dev *wdev, const 
 
 	if (WARN_ON(!sdev))
 		return -EINVAL;
+
+	if (!slsi_dev_gscan_supported())
+		return -ENOTSUPP;
 
 	ndev_vif = slsi_gscan_get_vif(sdev);
 
@@ -1166,7 +1178,7 @@ static int slsi_gscan_del(struct wiphy *wiphy,
 
 		for (i = 0; i < gscan->num_buckets; i++)
 			if (gscan->bucket[i]->used)
-				slsi_mlme_del_scan(sdev, dev, gscan->bucket[i]->scan_id);
+				slsi_mlme_del_scan(sdev, dev, gscan->bucket[i]->scan_id, false);
 		slsi_gscan_free_buckets(gscan);
 		sdev->gscan = gscan->next;
 		kfree(gscan);
@@ -1619,7 +1631,7 @@ static int slsi_gscan_reset_significant_change(struct wiphy *wiphy,
 		if (!bucket->used || !bucket->for_change_tracking)
 			continue;
 
-		(void)slsi_mlme_del_scan(sdev, net_dev, bucket->scan_id);
+		(void)slsi_mlme_del_scan(sdev, net_dev, bucket->scan_id, false);
 		bucket->for_change_tracking = false;
 		bucket->used = false;
 		SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
@@ -1747,7 +1759,12 @@ static int slsi_start_keepalive_offload(struct wiphy *wiphy, struct wireless_dev
 	u16 host_tag = 0;
 	u8 index = 0;
 
-	SLSI_DBG3(sdev, SLSI_MLME, "SUBCMD_START_KEEPALIVE_OFFLOAD Received\n");
+	SLSI_DBG3(sdev, SLSI_MLME, "SUBCMD_START_KEEPALIVE_OFFLOAD received\n");
+
+#ifndef NAT_KEEP_ALIVE
+	SLSI_DBG3(sdev, SLSI_MLME, "Returning Not Supported, as the NAT Keep Alive Feature is disabled as of now.\n");
+	return -EOPNOTSUPP;
+#endif
 
 	net_dev = slsi_get_netdev(sdev, SLSI_NET_INDEX_WLAN);
 	ndev_vif = netdev_priv(net_dev);
@@ -1807,10 +1824,10 @@ static int slsi_start_keepalive_offload(struct wiphy *wiphy, struct wireless_dev
 		}
 	}
 
-	if (ndev_vif->sta.keepalive_host_tag[index-1] != 0) {
-		SLSI_INFO(sdev, "Offload request already exists for index %d\n", index);
-		goto exit;
-	}
+	/*stop any existing request. This may fail if no request exists so ignore the return value*/
+	slsi_mlme_send_frame_mgmt(sdev, net_dev, NULL, 0, FAPI_DATAUNITDESCRIPTOR_IEEE802_3_FRAME,
+				  FAPI_MESSAGETYPE_PERIODIC_OFFLOAD,
+				  ndev_vif->sta.keepalive_host_tag[index - 1], 0, 0, 0);
 
 	skb = slsi_alloc_skb(sizeof(struct ethhdr) + ip_pkt_len, GFP_KERNEL);
 	if (WARN_ON(!skb)) {
@@ -1837,7 +1854,7 @@ static int slsi_start_keepalive_offload(struct wiphy *wiphy, struct wireless_dev
 	host_tag = slsi_tx_mgmt_host_tag(sdev);
 	r = slsi_mlme_send_frame_data(sdev, net_dev, skb, host_tag, FAPI_MESSAGETYPE_PERIODIC_OFFLOAD, (period * 1000));
 	if (r == 0)
-		ndev_vif->sta.keepalive_host_tag[index-1] = host_tag;
+		ndev_vif->sta.keepalive_host_tag[index - 1] = host_tag;
 exit:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 	return r;
@@ -1855,6 +1872,11 @@ static int slsi_stop_keepalive_offload(struct wiphy *wiphy, struct wireless_dev 
 	u8 index = 0;
 
 	SLSI_DBG3(sdev, SLSI_MLME, "SUBCMD_STOP_KEEPALIVE_OFFLOAD received\n");
+
+#ifndef NAT_KEEP_ALIVE
+	SLSI_DBG3(sdev, SLSI_MLME, "Returning Not Supported, as the NAT Keep Alive Feature is disabled as of now.\n");
+	return -EOPNOTSUPP;
+#endif
 
 	net_dev = slsi_get_netdev(sdev, SLSI_NET_INDEX_WLAN);
 	ndev_vif = netdev_priv(net_dev);
@@ -1888,15 +1910,10 @@ static int slsi_stop_keepalive_offload(struct wiphy *wiphy, struct wireless_dev 
 		}
 	}
 
-	if (ndev_vif->sta.keepalive_host_tag[index-1] == 0) {
-		SLSI_INFO(sdev, "No offload request exists for index %d\n", index);
-		goto exit;
-	}
-
 	r = slsi_mlme_send_frame_mgmt(sdev, net_dev, NULL, 0, FAPI_DATAUNITDESCRIPTOR_IEEE802_3_FRAME,
 				      FAPI_MESSAGETYPE_PERIODIC_OFFLOAD, ndev_vif->sta.keepalive_host_tag[index-1], 0, 0, 0);
-	if (r == 0)
-		ndev_vif->sta.keepalive_host_tag[index-1] = 0;
+	ndev_vif->sta.keepalive_host_tag[index - 1] = 0;
+
 exit:
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 	return r;
@@ -2555,8 +2572,6 @@ static void slsi_lls_iface_stat_fill(struct slsi_dev *sdev,
 	} else if (ndev_vif->vif_type == FAPI_VIFTYPE_AP) {
 		slsi_lls_iface_ap_stats(sdev, ndev_vif, iface_stat);
 		SLSI_ETHER_COPY(iface_stat->info.bssid, net_dev->dev_addr);
-	} else if (ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) {
-		iface_stat->info.mode = SLSI_LLS_INTERFACE_IBSS;
 	}
 	SLSI_ETHER_COPY(iface_stat->info.mac_addr, net_dev->dev_addr);
 
@@ -2620,8 +2635,8 @@ static void slsi_lls_radio_stat_fill(struct slsi_dev *sdev, struct net_device *d
 
 	radio_stat->radio = 0;
 
-	/* Expect each mib length in response is <= 10. So assume 10 bytes for each MIB */
-	mibrsp.dataLength = 10 * sizeof(get_values) / sizeof(get_values[0]);
+	/* Expect each mib length in response is <= 15 So assume 15 bytes for each MIB */
+	mibrsp.dataLength = 15 * sizeof(get_values) / sizeof(get_values[0]);
 	mibrsp.data = kmalloc(mibrsp.dataLength, GFP_KERNEL);
 	if (mibrsp.data == NULL) {
 		SLSI_ERR(sdev, "Cannot kmalloc %d bytes\n", mibrsp.dataLength);
@@ -2764,9 +2779,12 @@ static int slsi_get_feature_set(struct wiphy *wiphy,
 
 	SLSI_DBG3_NODEV(SLSI_GSCAN, "\n");
 
-	feature_set |= SLSI_WIFI_HAL_FEATURE_GSCAN
-		    | SLSI_WIFI_HAL_FEATURE_RSSI_MONITOR
-		    | SLSI_WIFI_HAL_FEATURE_MKEEP_ALIVE;
+	feature_set |= SLSI_WIFI_HAL_FEATURE_RSSI_MONITOR;
+#ifdef NAT_KEEP_ALIVE
+	feature_set |= SLSI_WIFI_HAL_FEATURE_MKEEP_ALIVE;
+#endif
+	if (slsi_dev_gscan_supported())
+		feature_set |= SLSI_WIFI_HAL_FEATURE_GSCAN;
 	if (slsi_dev_lls_supported())
 		feature_set |= SLSI_WIFI_HAL_FEATURE_LINK_LAYER_STATS;
 	if (slsi_dev_epno_supported())
@@ -2774,6 +2792,42 @@ static int slsi_get_feature_set(struct wiphy *wiphy,
 
 	ret = slsi_vendor_cmd_reply(wiphy, &feature_set, sizeof(feature_set));
 
+	return ret;
+}
+
+static int slsi_set_country_code(struct wiphy *wiphy, struct wireless_dev *wdev, const void *data, int len)
+{
+	struct slsi_dev          *sdev = SDEV_FROM_WIPHY(wiphy);
+	int                      ret = 0;
+	int                      temp;
+	int                      type;
+	const struct nlattr      *attr;
+	char country_code[SLSI_COUNTRY_CODE_LEN];
+
+	SLSI_DBG3(sdev, SLSI_GSCAN, "Received country code command\n");
+
+	nla_for_each_attr(attr, data, len, temp) {
+		type = nla_type(attr);
+		switch (type) {
+		case SLSI_NL_ATTRIBUTE_COUNTRY_CODE:
+		{
+			if (nla_len(attr) < (SLSI_COUNTRY_CODE_LEN-1)) {
+				ret = -EINVAL;
+				SLSI_ERR(sdev, "Insufficient Country Code Length : %d\n", nla_len(attr));
+				return ret;
+			}
+			memcpy(country_code, nla_data(attr), (SLSI_COUNTRY_CODE_LEN-1));
+			break;
+		}
+		default:
+			ret = -EINVAL;
+			SLSI_ERR(sdev, "Invalid type : %d\n", type);
+			return ret;
+		}
+	}
+	ret = slsi_set_country_update_regd(sdev, country_code, SLSI_COUNTRY_CODE_LEN);
+	if (ret < 0)
+		SLSI_ERR(sdev, "Set country failed ret:%d\n", ret);
 	return ret;
 }
 
@@ -2971,6 +3025,14 @@ static const struct wiphy_vendor_command     slsi_vendor_cmd[] = {
 		},
 		.flags = 0,
 		.doit = slsi_get_feature_set
+	},
+	{
+		{
+			.vendor_id = OUI_GOOGLE,
+			.subcmd = SLSI_NL80211_VENDOR_SUBCMD_SET_COUNTRY_CODE
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = slsi_set_country_code
 	}
 };
 

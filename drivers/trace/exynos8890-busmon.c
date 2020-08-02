@@ -484,7 +484,7 @@ static void busmon_report_ext_info(struct busmon_dev *busmon,
 	info1 = __raw_readl(node->regs + offset + REG_EXT_INFO_1);
 	info2 = __raw_readl(node->regs + offset + REG_EXT_INFO_2);
 
-	pr_info("\n--------------------------------------------------------------------------------\n"
+	pr_auto(ASL3, "\n--------------------------------------------------------------------------------\n"
 		"Detail NODE information for debuggging\n\n"
 		"Node Name       : %s [address: 0x%08X]\n"
 		"INTERRUPT_INFO  : 0x%08X\n"
@@ -528,7 +528,7 @@ static void busmon_report_route(struct busmon_dev *busmon,
 				rpath->port_name, id, user);
 		} else {
 			addr = __raw_readl(node->regs + offset + REG_EXT_INFO_0);
-			pr_info("\n--------------------------------------------------------------------------------\n"
+			pr_auto(ASL3, "\n--------------------------------------------------------------------------------\n"
 				"Route Information for DATA transaction\n\n"
 				"Master IP:%s's %s ---> Target:%s(addr: 0x%08X)\n",
 				master->port_name, master->master_name, rpath->dest_name, addr);
@@ -550,7 +550,7 @@ static void busmon_report_info(struct busmon_dev *busmon,
 		if (!strncmp(node->name, "P_CCORE_BUS_M_NODE", strlen(node->name))) {
 			unsigned int master;
 			master = BIT_ID_VAL(val) & 0x7;
-			pr_info("\n--------------------------------------------------------------------------------\n"
+			pr_auto(ASL3, "\n--------------------------------------------------------------------------------\n"
 				"Route Information for SFR transaction\n\n"
 				"Master IP       : %s\n"
 				"AxID            : 0x%X\n"
@@ -599,7 +599,7 @@ static void busmon_report_info(struct busmon_dev *busmon,
 		break;
 	}
 
-	pr_info("\n--------------------------------------------------------------------------------\n"
+	pr_auto(ASL3, "\n--------------------------------------------------------------------------------\n"
 		"Transaction information => Fail to access %s %s \n\n"
 		"reason          : %s\n"
 		"Target address  : 0x%08X\n"

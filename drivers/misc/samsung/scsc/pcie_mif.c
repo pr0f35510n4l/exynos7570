@@ -351,21 +351,16 @@ static void pcie_mif_irq_reg_reset_request_handler(struct scsc_mif_abs *interfac
 
 	pcie->reset_request_handler = handler;
 	pcie->reset_request_handler_data = dev;
-/*
-	HERE: Reinstate this logic when registration is done after mapping MIF resources [SSB-22939]
+
 	pcie_mbox_clear_ap_interrupt_source(&pcie->mbox, PCIE_MIF_RESET_REQUEST_SOURCE);
 	pcie_mbox_unmask_ap_interrupt_source(&pcie->mbox, PCIE_MIF_RESET_REQUEST_SOURCE);
-*/
 }
 
 static void pcie_mif_irq_unreg_reset_request_handler(struct scsc_mif_abs *interface)
 {
 	struct pcie_mif *pcie = pcie_mif_from_mif_abs(interface);
 
-/*
-	HERE: Reinstate this logic when deregistration is done before unmapping MIF resources [SSB-22939]
 	pcie_mbox_mask_ap_interrupt_source(&pcie->mbox, PCIE_MIF_RESET_REQUEST_SOURCE);
-*/
 	pcie->reset_request_handler = NULL;
 }
 

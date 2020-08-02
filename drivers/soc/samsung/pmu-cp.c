@@ -19,6 +19,7 @@ static u32 exynos_smc_read(enum cp_control reg)
 	u32 cp_ctrl_high;
 
 	cp_ctrl = exynos_smc(SMC_ID, READ_CTRL, 0, reg);
+	
 	if (!(cp_ctrl & 0xffff)) {
 		cp_ctrl >>= 16;
 		cp_ctrl_low = cp_ctrl;
@@ -29,6 +30,7 @@ static u32 exynos_smc_read(enum cp_control reg)
 	}
 
 	cp_ctrl = exynos_smc(SMC_ID, READ_CTRL, 1, reg);
+
 	if (!(cp_ctrl & 0xffff)) {
 		cp_ctrl >>= 16;
 		cp_ctrl_high = cp_ctrl;
@@ -72,14 +74,14 @@ int exynos_cp_reset(void)
 	if (cp_ctrl == -1)
 		return -1;
 
-	ret = exynos_smc_write(CP_CTRL_NS, cp_ctrl | CP_RESET_SET);
+	ret = exynos_smc_write(CP_CTRL_NS, cp_ctrl | CP_RESET_SET | CP_PWRON);
 	if (ret < 0) {
 		pr_err("%s: ERR! CP Reset Fail: %d\n", __func__, ret);
 		return -1;
 	}
 #else
 	ret = exynos_pmu_read(EXYNOS_PMU_CP_CTRL_NS, &cp_ctrl);
-	cp_ctrl |= CP_RESET_SET;
+	cp_ctrl |= CP_RESET_SET | CP_PWRON;
 
 	ret = exynos_pmu_write(EXYNOS_PMU_CP_CTRL_NS, cp_ctrl);
 	if (ret < 0) {
@@ -310,7 +312,10 @@ int exynos_set_cp_power_onoff(enum cp_mode mode)
 			pr_info("%s: CP Start: [0x%08X] -> [0x%08X]\n", __func__,
 				cp_ctrl, exynos_smc_read(CP_CTRL_S));
 	} else {
-		ret = exynos_smc_write(CP_CTRL_NS, cp_ctrl & ~CP_PWRON);
+		/* set sys_pwr_cfg registers */
+		exynos_sys_powerdown_conf_cp();
+
+		ret = exynos_smc_write(CP_CTRL_NS, cp_ctrl | CP_RESET_SET | CP_PWRON);
 		if (ret < 0)
 			pr_err("ERR! write Fail: %d\n", ret);
 		else
@@ -337,8 +342,11 @@ int exynos_set_cp_power_onoff(enum cp_mode mode)
 		if (ret < 0)
 			pr_err("%s: ERR! write Fail: %d\n", __func__, ret);
 	} else {
+		/* set sys_pwr_cfg registers */
+		exynos_sys_powerdown_conf_cp();
+
 		ret = exynos_pmu_read(EXYNOS_PMU_CP_CTRL_NS, &cp_ctrl);
-		cp_ctrl &= ~CP_PWRON;
+		cp_ctrl |= CP_RESET_SET | CP_PWRON;
 
 		ret = exynos_pmu_write(EXYNOS_PMU_CP_CTRL_NS, cp_ctrl);
 		if (ret < 0)
@@ -352,12 +360,12 @@ void exynos_sys_powerdown_conf_cp(void)
 {
 	pr_info("%s\n", __func__);
 
-	exynos_pmu_write(EXYNOS_PMU_CENTRAL_SEQ_CP_CONFIGURATION, 0);
 	exynos_pmu_write(EXYNOS_PMU_RESET_AHEAD_CP_SYS_PWR_REG, 0);
 	exynos_pmu_write(EXYNOS_PMU_LOGIC_RESET_CP_SYS_PWR_REG, 0);
 	exynos_pmu_write(EXYNOS_PMU_RESET_ASB_CP_SYS_PWR_REG, 0);
 	exynos_pmu_write(EXYNOS_PMU_TCXO_GATE_SYS_PWR_REG, 0);
 	exynos_pmu_write(EXYNOS_PMU_CLEANY_BUS_SYS_PWR_REG, 0);
+	exynos_pmu_write(EXYNOS_PMU_CENTRAL_SEQ_CP_CONFIGURATION, 0);
 }
 
 #if !defined(CONFIG_CP_SECURE_BOOT)

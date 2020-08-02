@@ -87,6 +87,13 @@ void decon_extra_vsync_wait_add(int);
 void gpu_pm_record_state(void *dev, bool is_active);
 #endif
 
+enum mali_error {
+	MALI_ERROR_NONE = 0,
+	MALI_ERROR_OUT_OF_GPU_MEMORY,
+	MALI_ERROR_OUT_OF_MEMORY,
+	MALI_ERROR_FUNCTION_FAILED,
+};
+
 extern int gpu_register_dump(void);
 
 void gpu_create_context(void *ctx)

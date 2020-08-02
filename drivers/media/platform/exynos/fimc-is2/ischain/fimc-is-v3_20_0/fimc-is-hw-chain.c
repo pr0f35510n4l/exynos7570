@@ -42,7 +42,7 @@ const struct fimc_is_subdev_ops fimc_is_subdev_scp_ops;
 
 void fimc_is_enter_lib_isr(void)
 {
-	kernel_neon_begin_partial(32);
+	kernel_neon_begin();
 }
 
 void fimc_is_exit_lib_isr(void)
@@ -782,7 +782,7 @@ int fimc_is_hw_g_ctrl(void *itfc_data, int hw_id, enum hw_g_ctrl_id id, void *va
 
 	switch (id) {
 	case HW_G_CTRL_FRM_DONE_WITH_DMA:
-		*(bool *)val = false;
+		*(bool *)val = true;
 		break;
 	case HW_G_CTRL_HAS_MCSC:
 		*(bool *)val = true;

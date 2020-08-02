@@ -10,7 +10,6 @@
 #include "sap_ma.h"
 #include "hip.h"
 #include "ba.h"
-#include "oxygen_ioctl.h"
 #include "mgt.h"
 #include "nl80211_vendor.h"
 
@@ -226,18 +225,11 @@ static int slsi_rx_data_process_skb(struct slsi_dev *sdev, struct net_device *de
 	}
 
 	/* Buffering of the frames before mlme_connected_ind */
-	if ((ndev_vif->vif_type == FAPI_VIFTYPE_AP || ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) && (peer->connected_state == SLSI_STA_CONN_STATE_CONNECTING)) {
+	if ((ndev_vif->vif_type == FAPI_VIFTYPE_AP) && (peer->connected_state == SLSI_STA_CONN_STATE_CONNECTING)) {
 		SLSI_DBG2(sdev, SLSI_MLME, "Buffering MA-UnitData FRAMES");
 		slsi_skb_queue_tail(&peer->buffered_frames, skb);
 		return 1;
 	}
-
-	/* In ad-hoc mode, we need to check that the destination address is not a
-	 * multicast address before allowing the packet to be passed to tbe block-ack
-	 * processing code.
-	 */
-	if ((ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) && is_multicast_ether_addr(ehdr->h_dest))
-		skip_ba = true;
 
 	if (!skip_ba && (slsi_ba_check(peer, fapi_get_u16(skb, u.ma_unitdata_ind.priority))))
 		if (!slsi_ba_process_frame(dev, peer, skb, (seq_num & SLSI_RX_SEQ_NUM_MASK),
@@ -381,26 +373,6 @@ int slsi_rx_data(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *
 	return 0;
 }
 
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-static void slsi_rx_tx_failure_ind(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *skb)
-{
-	struct netdev_vif *ndev_vif = netdev_priv(dev);
-	void *addr = NULL;
-
-	WARN_ON(!SLSI_MUTEX_IS_LOCKED(ndev_vif->vif_mutex));
-	WARN_ON(ndev_vif->ibss.olsrd_pid == 0);
-
-	addr = (void *)fapi_get_buff(skb, u.ma_tx_failure_ind.peer_sta_address);
-	SLSI_DBG1(sdev, SLSI_MLME, "Receive tx_fail event from %pM\n", addr);
-
-	if (ndev_vif->ibss.olsrd_pid > 0)
-		oxygen_netlink_send(ndev_vif->ibss.olsrd_pid, IBSS_EVENT_TXFAIL, ndev_vif->ibss.tx_fail_seq++, (void *)addr, ETH_ALEN);
-
-	slsi_kfree_skb(skb);
-	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
-}
-#endif
-
 static int slsi_rx_data_cfm(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *skb)
 {
 	struct netdev_vif *ndev_vif = netdev_priv(dev);
@@ -454,11 +426,6 @@ void slsi_rx_netdev_data_work(struct work_struct *work)
 		case MA_UNITDATA_CFM:
 			(void)slsi_rx_data_cfm(sdev, dev, skb);
 			break;
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-		case MA_TX_FAILURE_IND:
-			slsi_rx_tx_failure_ind(sdev, dev, skb);
-			break;
-#endif
 		default:
 			SLSI_DBG1(sdev, SLSI_MLME, "Unexpected Data: 0x%.4x\n", fapi_get_sigid(skb));
 			slsi_kfree_skb(skb);
@@ -552,18 +519,16 @@ static int sap_ma_txdone(struct slsi_dev *sdev, u16 colour)
 			return scsc_wifi_fcq_receive_data(dev, &ndev_vif->ap.group_data_qs, ac, sdev, vif, peer_index);
 		}
 		peer = slsi_get_peer_from_qs(sdev, dev, MAP_AID_TO_QS(peer_index));
-		if (peer) {
+		if (peer)
 			return scsc_wifi_fcq_receive_data(dev, &peer->data_qs, ac, sdev, vif, peer_index);
-		} else {
-			SLSI_DBG3(sdev, SLSI_RX, "peer record NOT found for peer_index=%d\n", peer_index);
-			/* We need to handle this case as special. Peer disappeared bug hip4
-			 * is sending back the colours to free.
-			 */
-			return scsc_wifi_fcq_receive_data_no_peer(dev, ac, sdev, vif, peer_index);
-		}
-	} else {
-		SLSI_ERR(sdev, "illegal peer_index vif=%d peer_index=%d\n", vif, peer_index);
+
+		SLSI_DBG3(sdev, SLSI_RX, "peer record NOT found for peer_index=%d\n", peer_index);
+		/* We need to handle this case as special. Peer disappeared bug hip4
+		 * is sending back the colours to free.
+		 */
+		return scsc_wifi_fcq_receive_data_no_peer(dev, ac, sdev, vif, peer_index);
 	}
+	SLSI_ERR(sdev, "illegal peer_index vif=%d peer_index=%d\n", vif, peer_index);
 	return -EINVAL;
 }
 

@@ -1,4 +1,0 @@
-#
-# vibrator driver configuration
-#
-source "drivers/3rd_party/vibrator/drv2603/Kconfig"

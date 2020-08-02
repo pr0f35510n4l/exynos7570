@@ -137,8 +137,8 @@ exit:
 	if (!ret)
 		ret = (phy->state != prev_state);
 
-	pr_debug("OTG SM: %s => %s\n", usb_otg_state_string(prev_state),
-		(ret > 0) ? usb_otg_state_string(phy->state) : "(no change)");
+	if(log_usb)
+		pr_info("OTG SM: %s => %s\n", usb_otg_state_string(prev_state),(ret > 0) ? usb_otg_state_string(phy->state) : "(no change)");
 
 	return ret;
 }

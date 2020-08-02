@@ -28,8 +28,8 @@ struct usi_mode {
 };
 
 struct usi_data {
- void __iomem *base;
- u32   mode;
+	void __iomem	*base;
+	u32 		mode;
 };
 
 static const struct usi_mode usi_modes[] = {
@@ -85,7 +85,7 @@ static int usi_probe(struct platform_device *pdev)
 
 	writel(data->mode, data->base);
 
-	dev_info(&pdev->dev, "usi_probe() mode:%d",data->mode);
+	dev_info(&pdev->dev, "usi_probe() mode:%d\n", data->mode);
 
 	platform_set_drvdata(pdev, data);
 
@@ -101,20 +101,20 @@ MODULE_DEVICE_TABLE(of, usi_dt_match);
 
 static int usi_resume_noirq(struct device *dev)
 {
- struct platform_device *pdev = to_platform_device(dev);
- struct usi_data *data = platform_get_drvdata(pdev);
- int ret;
+	struct platform_device *pdev = to_platform_device(dev);
+	struct usi_data *data = platform_get_drvdata(pdev);
+	int ret;
 
- if (data->mode && data->base) {
-	writel(data->mode, data->base);
-	dev_info(&pdev->dev, "%s mode:%d\n", __func__, data->mode);
-	ret = 0;
- } else {
-	dev_err(&pdev->dev, "%s wrong usi data\n", __func__);
-	ret = -EINVAL;
- }
+	if (data->mode && data->base) {
+		writel(data->mode, data->base);
+		dev_info(&pdev->dev, "%s mode:%d\n", __func__, data->mode);
+		ret = 0;
+	} else {
+		dev_err(&pdev->dev, "%s wrong usi data\n", __func__);
+		ret = -EINVAL;
+	}
 
- return ret;
+	return ret;
 }
 
 static const struct dev_pm_ops usi_pm = {

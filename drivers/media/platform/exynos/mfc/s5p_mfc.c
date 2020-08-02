@@ -1474,6 +1474,7 @@ static inline void s5p_mfc_handle_error(struct s5p_mfc_ctx *ctx,
 	struct s5p_mfc_dev *dev;
 	unsigned long flags;
 	struct s5p_mfc_buf *src_buf;
+	int index;
 
 	if (!ctx) {
 		mfc_err("no mfc context to run\n");
@@ -1495,14 +1496,46 @@ static inline void s5p_mfc_handle_error(struct s5p_mfc_ctx *ctx,
 	case MFCINST_INIT:
 		/* This error had to happen while acquireing instance */
 	case MFCINST_GOT_INST:
-		/* This error had to happen while parsing vps only */
-		if (err == S5P_FIMV_ERR_VPS_ONLY_ERROR) {
+		/* This error had to happen while parsing the header */
+		if (err == S5P_FIMV_ERR_NO_KEY_FRAME) {
+			if (!list_empty(&ctx->src_queue)) {
+				src_buf = list_entry(ctx->src_queue.next,
+						struct s5p_mfc_buf, list);
+				index = src_buf->vb.v4l2_buf.index;
+				list_del(&src_buf->list);
+				ctx->src_queue_cnt--;
+				/* decoder src buffer CFW UNPROT */
+				if (ctx->is_drm) {
+					if (test_bit(index, &ctx->stream_protect_flag)) {
+						if (s5p_mfc_stream_buf_prot(ctx, src_buf, false))
+							mfc_err_ctx("failed to CFW_UNPROT\n");
+						else
+							clear_bit(index, &ctx->stream_protect_flag);
+					}
+					mfc_debug(2, "[%d] dec src buf un-prot_flag: %#lx\n",
+							index, ctx->stream_protect_flag);
+				}
+				vb2_buffer_done(&src_buf->vb, VB2_BUF_STATE_DONE);
+			}
+		} else if (err == S5P_FIMV_ERR_VPS_ONLY_ERROR) {
 			s5p_mfc_change_state(ctx, MFCINST_VPS_PARSED_ONLY);
 			if (!list_empty(&ctx->src_queue)) {
 				src_buf = list_entry(ctx->src_queue.next,
 						struct s5p_mfc_buf, list);
+				index = src_buf->vb.v4l2_buf.index;
 				list_del(&src_buf->list);
 				ctx->src_queue_cnt--;
+				/* decoder src buffer CFW UNPROT */
+				if (ctx->is_drm) {
+					if (test_bit(index, &ctx->stream_protect_flag)) {
+						if (s5p_mfc_stream_buf_prot(ctx, src_buf, false))
+							mfc_err_ctx("failed to CFW_UNPROT\n");
+						else
+							clear_bit(index, &ctx->stream_protect_flag);
+					}
+					mfc_debug(2, "[%d] dec src buf un-prot_flag: %#lx\n",
+							index, ctx->stream_protect_flag);
+				}
 				vb2_buffer_done(&src_buf->vb, VB2_BUF_STATE_DONE);
 			}
 		} else if (err == S5P_FIMV_ERR_HEADER_NOT_FOUND) {
@@ -1527,8 +1560,20 @@ static inline void s5p_mfc_handle_error(struct s5p_mfc_ctx *ctx,
 			if (!list_empty(&ctx->src_queue)) {
 				src_buf = list_entry(ctx->src_queue.next,
 						struct s5p_mfc_buf, list);
+				index = src_buf->vb.v4l2_buf.index;
 				list_del(&src_buf->list);
 				ctx->src_queue_cnt--;
+				/* decoder src buffer CFW UNPROT */
+				if (ctx->is_drm) {
+					if (test_bit(index, &ctx->stream_protect_flag)) {
+						if (s5p_mfc_stream_buf_prot(ctx, src_buf, false))
+							mfc_err_ctx("failed to CFW_UNPROT\n");
+						else
+							clear_bit(index, &ctx->stream_protect_flag);
+					}
+					mfc_debug(2, "[%d] dec src buf un-prot_flag: %#lx\n",
+							index, ctx->stream_protect_flag);
+				}
 				vb2_buffer_done(&src_buf->vb, VB2_BUF_STATE_DONE);
 			}
 		}
@@ -2097,7 +2142,7 @@ static int s5p_mfc_open(struct file *file)
 				mfc_err_ctx("DRM F/W buffer is not allocated.\n");
 				dev->drm_fw_status = 0;
 			} else {
-				if (IS_MFCv101X(dev)) {
+				if (IS_MFCv10X(dev)) {
 					ret = exynos_smc(SMC_DRM_SECBUF_PROT,
 							dev->drm_fw_info.phys,
 							dev->fw_region_size,
@@ -2196,7 +2241,7 @@ err_fw_load:
 		dev->is_support_smc = 0;
 #ifndef CONFIG_EXYNOS_MFC_HRVC
 		dev->drm_fw_status = 0;
-		if (IS_MFCv101X(dev)) {
+		if (IS_MFCv10X(dev)) {
 			ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
 					dev->drm_fw_info.phys,
 					dev->fw_region_size,
@@ -2385,7 +2430,7 @@ static int s5p_mfc_release(struct file *file)
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 					dev->is_support_smc = 0;
 #ifndef CONFIG_EXYNOS_MFC_HRVC
-					if (IS_MFCv101X(dev)) {
+					if (IS_MFCv10X(dev)) {
 						ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
 								dev->drm_fw_info.phys,
 								dev->fw_region_size,
@@ -2436,7 +2481,7 @@ static int s5p_mfc_release(struct file *file)
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 		dev->is_support_smc = 0;
 #ifndef CONFIG_EXYNOS_MFC_HRVC
-		if (IS_MFCv101X(dev)) {
+		if (IS_MFCv10X(dev)) {
 			ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
 					dev->drm_fw_info.phys,
 					dev->fw_region_size,
@@ -3338,6 +3383,7 @@ static struct platform_driver s5p_mfc_driver = {
 		.owner	= THIS_MODULE,
 		.pm	= &s5p_mfc_pm_ops,
 		.of_match_table = exynos_mfc_match,
+		.suppress_bind_attrs = true,		
 	},
 };
 

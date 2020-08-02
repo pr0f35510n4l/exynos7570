@@ -84,7 +84,7 @@ static int exynos_fimc_is_module_pin_control(struct device *dev,
 		{
 			struct regulator *regulator = NULL;
 
-			regulator = regulator_get(dev, name);
+			regulator = regulator_get_optional(dev, name);
 			if (IS_ERR_OR_NULL(regulator)) {
 				pr_err("%s : regulator_get(%s) fail\n", __func__, name);
 				return PTR_ERR(regulator);
@@ -240,7 +240,7 @@ static int exynos_fimc_is_module_pin_debug(struct device *dev,
 			struct regulator *regulator;
 			int voltage;
 
-			regulator = regulator_get(dev, name);
+			regulator = regulator_get_optional(dev, name);
 			if (IS_ERR(regulator)) {
 				pr_err("%s : regulator_get(%s) fail\n", __func__, name);
 				return PTR_ERR(regulator);

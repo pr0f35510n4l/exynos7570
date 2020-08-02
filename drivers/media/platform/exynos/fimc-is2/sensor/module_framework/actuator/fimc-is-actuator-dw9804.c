@@ -273,7 +273,7 @@ int sensor_dw9804_actuator_init(struct v4l2_subdev *subdev, u32 val)
 	}
 
 	/* EEPROM AF calData address */
-	cal_addr = gPtr_lib_support.kvaddr + FIMC_IS_REAR_CALDATA_OFFSET + EEPROM_OEM_BASE;
+	cal_addr = gPtr_lib_support.kvaddr_rear_cal + EEPROM_OEM_BASE;
 	cal_data = (struct fimc_is_caldata_list_dw9804 *)(cal_addr);
 
 	/* Read into EEPROM data or default setting */
@@ -487,9 +487,9 @@ int sensor_dw9804_actuator_probe(struct i2c_client *client,
 	probe_info("%s sensor_id %d\n", __func__, sensor_id);
 
 	device = &core->sensor[sensor_id];
-	if (!device) {
-		err("sensor device is NULL");
-		ret = -ENOMEM;
+	if (!test_bit(FIMC_IS_SENSOR_PROBE, &device->state)) {
+		err("sensor device is not yet probed");
+		ret = -EPROBE_DEFER;
 		goto p_err;
 	}
 
@@ -553,6 +553,7 @@ MODULE_DEVICE_TABLE(of, exynos_fimc_is_dw9804_match);
 
 static const struct i2c_device_id actuator_dw9804_idt[] = {
 	{ ACTUATOR_NAME, 0 },
+	{},
 };
 
 static struct i2c_driver actuator_dw9804_driver = {

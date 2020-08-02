@@ -26,6 +26,12 @@
 #include "fimc-is-helper-flash-i2c.h"
 #include "fimc-is-core.h"
 #include "fimc-is-regs.h"
+#include "fimc-is-flash-i2c.h"
+
+#ifdef CAMERA_SYSFS_V2
+struct device *led_dev = NULL;
+extern struct class *camera_class;
+#endif
 
 static int flash_torch_set_init(struct i2c_client *client)
 {
@@ -203,7 +209,7 @@ static int sensor_i2c_flash_control(struct v4l2_subdev *subdev, enum flash_mode 
 	flash = (struct fimc_is_flash *)v4l2_get_subdevdata(subdev);
 	BUG_ON(!flash);
 
-	dbg_flash("%s : mode = %s, intensity = %d\n", __func__,
+	info("%s : mode = %s, intensity = %d\n", __func__,
 		mode == CAM2_FLASH_MODE_OFF ? "OFF" :
 		mode == CAM2_FLASH_MODE_SINGLE ? "FLASH" : "TORCH",
 		intensity);
@@ -217,9 +223,17 @@ static int sensor_i2c_flash_control(struct v4l2_subdev *subdev, enum flash_mode 
 		if (ret)
 			err("torch flash off fail");
 	} else if (mode == CAM2_FLASH_MODE_SINGLE) {
-		ret = control_flash_gpio(flash->flash_gpio, intensity);
-		if (ret)
-			err("capture flash on fail");
+		/* Separate the Main Flash Current by HW Rev. in J3 POP projects */
+		info("flash->flash_data.flash_current : %d",flash->flash_data.flash_current);
+		if(flash->flash_data.flash_current != 0xf0){
+			ret = control_flash_gpio(flash->flash_gpio, intensity);
+			if (ret)
+				err("capture flash on fail");
+			ret = fimc_is_flash_updata_reg(flash->client, REG_FLED_CTRL3, 0xff, CURRENT_MASK);
+			if (ret)
+				err("setting flash timing is fail");
+		}else
+			info("The flash_current is set as 0mA..");
 	} else if (mode == CAM2_FLASH_MODE_TORCH) {
 		/* Brightness set */
 		ret = fimc_is_flash_updata_reg(flash->client, REG_FLED_CTRL1, (u8)(intensity & 0xff), CURRENT_MASK);
@@ -267,7 +281,10 @@ int flash_i2c_s_ctrl(struct v4l2_subdev *subdev, struct v4l2_control *ctrl)
 		flash->flash_data.firing_time_us = ctrl->value;
 		break;
 	case V4L2_CID_FLASH_SET_FIRE:
-		ret =  sensor_i2c_flash_control(subdev, flash->flash_data.mode, ctrl->value);
+#ifdef CONFIG_VENDER_MCD
+		ctrl->value = flash->flash_data.flash_current+flash->flash_data.movie_current;
+#endif
+		ret = sensor_i2c_flash_control(subdev, flash->flash_data.mode, ctrl->value);
 		if (ret) {
 			err("sensor_i2c_flash_control(mode:%d, val:%d) is fail(%d)",
 					(int)flash->flash_data.mode, ctrl->value, ret);
@@ -283,6 +300,109 @@ int flash_i2c_s_ctrl(struct v4l2_subdev *subdev, struct v4l2_control *ctrl)
 p_err:
 	return ret;
 }
+
+#ifdef CAMERA_SYSFS_V2
+static ssize_t store_rear_torch_flash(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	int ret = 0;
+	struct fimc_is_flash *flash;
+	struct fimc_is_device_sensor *device;
+	struct fimc_is_device_sensor_peri *sensor_peri;
+	struct fimc_is_core *core;
+	u32 sensor_id = 0;
+	int value = 0;
+	int brightness = 0;
+	int mode = 0;
+
+	if ((buf == NULL) || kstrtouint(buf, 10, &value)) {
+		return -1;
+	}
+
+	core = (struct fimc_is_core *)dev_get_drvdata(dev);
+	if (!core) {
+		err("core is NULL");
+		ret = -ENOMEM;
+		goto p_err;
+	}
+
+	/* TODO: Get a sensor_id by user */
+	device = &core->sensor[sensor_id];
+	if (!device) {
+		err("sensor device is NULL");
+		ret = -ENOMEM;
+		goto p_err;
+	}
+
+	sensor_peri = find_peri_by_flash_id(device, FLADRV_NAME_DRV_FLASH_I2C);
+	if (!sensor_peri) {
+		err("sensor peri is NULL");
+		ret = -ENOMEM;
+		goto p_err;
+	}
+
+	flash = &sensor_peri->flash;
+
+	if (value == 0) {
+		/* Turn off Torch */
+		mode = CAM2_FLASH_MODE_OFF;
+		dbg_flash("flash torch off!\n");
+	} else if(value == 1) {
+		/* Turn on Torch */
+		brightness = flash->flash_data.torch_current;
+		mode = CAM2_FLASH_MODE_TORCH;
+		dbg_flash("flash torch on!\n");
+	} else if(value == 100) {
+		/* Factory mode Turn on Torch */
+		brightness = flash->flash_data.factory_current;
+		mode = CAM2_FLASH_MODE_TORCH;
+		dbg_flash("Factory mode flash torch on!\n");
+	} else if(1001 <= value && value <= 1010) {
+		/* The flashlight value is setted to 1001, 1002, 1004, 1006, 1009 in FlashlightController.java of framework. */
+		if (value <= 1001)
+			brightness = flash->flash_data.torch_level1;
+		else if (value <= 1002)
+			brightness = flash->flash_data.torch_level2;
+		else if (value <= 1004)
+			brightness = flash->flash_data.torch_level3;
+		else if (value <= 1006)
+			brightness = flash->flash_data.torch_level4;
+		else if (value <= 1010)
+			brightness = flash->flash_data.torch_level5;
+		else
+			brightness = flash->flash_data.torch_level3;
+	
+		mode = CAM2_FLASH_MODE_TORCH;
+		dbg_flash("Turn Torch Step on!\n");
+	} else {
+		pr_err("%s: Invalid value:%d\n", __func__, value);
+		goto p_err;
+	}
+
+	info("%s : mode = %d, brightness = %d\n", __func__, mode, brightness);
+
+	ret = sensor_i2c_flash_control(flash->subdev, mode, brightness);
+
+	if (ret < 0) {
+		err("Failed to i2c flash torch control");
+		goto p_err;
+	}
+
+p_err:
+	return count;
+}
+
+static ssize_t show_rear_torch_flash(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	pr_info("[LED] %s , MAX STEP TORCH_LED:%d\n", __func__, TORCH_OUT_I_MAX - 1);
+	return sprintf(buf, "%d\n", TORCH_OUT_I_MAX - 1);
+}
+
+static DEVICE_ATTR(rear_torch_flash, 0644, show_rear_torch_flash, store_rear_torch_flash);
+static DEVICE_ATTR(rear_flash, 0644, show_rear_torch_flash, store_rear_torch_flash);
+#endif
 
 static ssize_t store_flash_torch_control(struct device *dev,
 		struct device_attribute *attr,
@@ -363,7 +483,6 @@ static struct attribute_group fimc_is_flash_attr_group = {
 	.attrs	= fimc_is_flash_entries,
 };
 
-
 static const struct v4l2_subdev_core_ops core_ops = {
 	.init = flash_i2c_init,
 	.s_ctrl = flash_i2c_s_ctrl,
@@ -384,6 +503,19 @@ int flash_probe(struct device *dev, struct i2c_client *client)
 	u32 sensor_id = 0;
 	struct device_node *dnode;
 
+#ifdef CONFIG_VENDER_MCD
+	u32 flash_current = 0;
+	u32 movie_current = 0;
+	u32 torch_current = 0;
+	u32 factory_current = 0;
+
+	u32 torch_level1 = 0;
+	u32 torch_level2 = 0;
+	u32 torch_level3 = 0;
+	u32 torch_level4 = 0;
+	u32 torch_level5 = 0;
+#endif
+
 	BUG_ON(!fimc_is_dev);
 	BUG_ON(!dev);
 
@@ -394,6 +526,62 @@ int flash_probe(struct device *dev, struct i2c_client *client)
 		err("id read is fail(%d)", ret);
 		goto p_err;
 	}
+
+#ifdef CONFIG_VENDER_MCD
+	ret = of_property_read_u32(dnode, "flash_current", &flash_current);
+	if (ret) {
+		err("flash_current read is fail(%d)", ret);
+		goto p_err;
+	}
+
+	ret = of_property_read_u32(dnode, "movie_current", &movie_current);
+	if (ret) {
+		err("movie_current read is fail(%d)", ret);
+		goto p_err;
+	}
+
+	ret = of_property_read_u32(dnode, "torch_current", &torch_current);
+	if (ret) {
+		err("movie_current read is fail(%d)", ret);
+		goto p_err;
+	}
+
+	ret = of_property_read_u32(dnode, "factory_current", &factory_current);
+	if (ret) {
+		err("movie_current read is fail(%d)", ret);
+		goto p_err;
+	}
+
+	ret = of_property_read_u32(dnode, "torch_level1", &torch_level1);
+	if (ret) {
+		torch_level1 = TORCH_OUT_I_20MA;
+		err("torch_levle1 is not defined in dts(%d). so default set %d", ret, torch_level1);
+	}
+
+	ret = of_property_read_u32(dnode, "torch_level2", &torch_level2);
+	if (ret) {
+		torch_level2 = TORCH_OUT_I_40MA;
+		err("torch_levle2 is not defined in dts(%d). so default set %d", ret, torch_level2);
+	}
+
+	ret = of_property_read_u32(dnode, "torch_level3", &torch_level3);
+	if (ret) {
+		torch_level3 = TORCH_OUT_I_60MA;
+		err("torch_levle3 is not defined in dts(%d). so default set %d", ret, torch_level3);
+	}
+
+	ret = of_property_read_u32(dnode, "torch_level4", &torch_level4);
+	if (ret) {
+		torch_level4 = TORCH_OUT_I_80MA;
+		err("torch_levle4 is not defined in dts(%d). so default set %d", ret, torch_level4);
+	}
+
+	ret = of_property_read_u32(dnode, "torch_level5", &torch_level5);
+	if (ret) {
+		torch_level5 = TORCH_OUT_I_120MA;
+		err("torch_level5 is not defined in dts(%d). so default set %d", ret, torch_level5);
+	}
+#endif
 
 	core = (struct fimc_is_core *)dev_get_drvdata(fimc_is_dev);
 	if (!core) {
@@ -442,9 +630,27 @@ int flash_probe(struct device *dev, struct i2c_client *client)
 		return -EINVAL;
 	}
 
+	gpio_request_one(flash->flash_gpio, GPIOF_OUT_INIT_LOW, "CAM_FLASH_GPIO_OUTPUT");
+
 	flash->flash_data.mode = CAM2_FLASH_MODE_OFF;
 	flash->flash_data.intensity = 100; /* TODO: Need to figure out min/max range */
 	flash->flash_data.firing_time_us = 1 * 1000 * 1000; /* Max firing time is 1sec */
+
+#ifdef CONFIG_VENDER_MCD
+#ifdef FLASH_S2MPU06
+	flash->flash_data.flash_current = S2MPU06_FLASH_CURRENT(flash_current);
+	flash->flash_data.movie_current = S2MPU06_TORCH_CURRENT(movie_current);
+	flash->flash_data.torch_current = S2MPU06_TORCH_CURRENT(torch_current);
+	flash->flash_data.factory_current = S2MPU06_TORCH_CURRENT(factory_current);
+
+	flash->flash_data.torch_level1 = torch_level1;
+	flash->flash_data.torch_level2 = torch_level2;
+	flash->flash_data.torch_level3 = torch_level3;
+	flash->flash_data.torch_level4 = torch_level4;
+	flash->flash_data.torch_level5 = torch_level5;
+#endif
+#endif
+	info("flash_current : %d \n",flash_current);
 
 	/* flash init for torch setting */
 	ret = flash_torch_set_init(flash->client);
@@ -456,6 +662,25 @@ int flash_probe(struct device *dev, struct i2c_client *client)
 	if (ret < 0)
 		warn("%s: Failt to torch sysfs init\n", __func__);
 
+#ifdef CAMERA_SYSFS_V2
+	if(led_dev == NULL) {
+		led_dev = device_create(camera_class, NULL, 3, NULL, "flash");
+	}
+	if (IS_ERR(led_dev)) {
+		pr_err("<%s> Failed to create device(flash)!\n", __func__);
+	} else {
+	    dev_set_drvdata(led_dev, core);
+		if (device_create_file(led_dev, &dev_attr_rear_flash) < 0) {
+			pr_err("<%s> failed to create device file, %s\n",
+			__func__ ,dev_attr_rear_torch_flash.attr.name);
+		}
+		if (device_create_file(led_dev, &dev_attr_rear_torch_flash) < 0) {
+			pr_err("<%s> failed to create device file, %s\n",
+			__func__ ,dev_attr_rear_torch_flash.attr.name);
+		}
+	}
+#endif
+
 #ifdef CONFIG_MUIC_NOTIFIER
 	/* use to muic notifier for torch */
 	muic_notifier_register(&flash->flash_noti_ta,
@@ -464,12 +689,31 @@ int flash_probe(struct device *dev, struct i2c_client *client)
 #endif
 
 	v4l2_i2c_subdev_init(subdev_flash, client, &subdev_ops);
-
 	v4l2_set_subdevdata(subdev_flash, flash);
 	v4l2_set_subdev_hostdata(subdev_flash, device);
 	snprintf(subdev_flash->name, V4L2_SUBDEV_NAME_SIZE, "flash-subdev.%d", flash->id);
 
 p_err:
+	return ret;
+}
+
+static int flash_remove(struct i2c_client *client)
+{
+	int ret = 0;
+
+#ifdef CAMERA_SYSFS_V2
+	if (led_dev) {
+		device_remove_file(led_dev, &dev_attr_rear_flash);
+		device_remove_file(led_dev, &dev_attr_rear_torch_flash);
+	}
+
+	if (camera_class && led_dev) {
+		device_destroy(camera_class, led_dev->devt);
+	}
+#endif
+
+	info("%s\n", __func__);
+
 	return ret;
 }
 
@@ -503,8 +747,19 @@ static int flash_i2c_remove(struct i2c_client *client)
 {
 	int ret = 0;
 
+	if (!client) {
+		err("client is null");
+		ret = -EPROBE_DEFER;
+		goto p_err;
+	}
+
+#ifdef CAMERA_SYSFS_V2
+	flash_remove(client);
+#endif
+
 	info("%s\n", __func__);
 
+p_err:
 	return ret;
 }
 
@@ -519,6 +774,7 @@ MODULE_DEVICE_TABLE(of, exynos_fimc_is_sensor_flash_i2c_match);
 /* register I2C driver */
 static const struct i2c_device_id flash_i2c_idt[] = {
     { "I2C", 0 },
+    {},
 };
 
 static struct i2c_driver sensor_flash_gpio_i2c_driver = {

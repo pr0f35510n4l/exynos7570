@@ -26,10 +26,20 @@
 #include <linux/mfd/samsung/s2mpu06.h>
 #include <linux/mfd/samsung/s2mpu06-private.h>
 #include <linux/io.h>
+#include <linux/debugfs.h>
 
 static unsigned int sel2volt(int id, unsigned int sel, unsigned int mask);
 
 static struct s2mpu06_info *static_info;
+
+#ifdef CONFIG_DEBUG_FS
+static u8 i2caddr;
+static u8 i2cdata;
+static struct i2c_client *dbgi2c;
+static struct dentry *s2mpu06_root;
+static struct dentry *s2mpu06_i2caddr;
+static struct dentry *s2mpu06_i2cdata;
+#endif
 
 struct s2mpu06_info {
 	struct regulator_dev *rdev[S2MPU06_REGULATOR_MAX];
@@ -39,8 +49,52 @@ struct s2mpu06_info {
 	struct s2mpu06_dev *iodev;
 	unsigned int vsel_value[S2MPU06_REGULATOR_MAX];
 	bool cache_data;
+#ifdef CONFIG_SEC_DEBUG_PMIC
+	struct notifier_block pm_notifier;
+#endif
 };
 
+#ifdef CONFIG_SEC_DEBUG_PMIC
+#define PMIC_NAME	"s2mpu06"
+#define PMIC_NUM_OF_BUCKS	3
+#define PMIC_NUM_OF_LDOS	24
+
+static int buck_addrs[PMIC_NUM_OF_BUCKS] = { 0x13, 0x17, 0x19 };
+static int ldo_addrs[PMIC_NUM_OF_LDOS] = { 0x1e, 0x20, 0x21, 0x22, 0x23, 0x24, 0x26, 0x27, 0x28, 0x29, /* LDO1~10 */
+	0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37 }; /* LDO11~24 */
+
+static int s2m_debug_reg(struct regulator_dev *rdev, char *str)
+{
+	int ret;
+	u8 val;
+	int i;
+
+	if (!static_info)
+		return 0;
+
+	for (i = 0; i < PMIC_NUM_OF_BUCKS; ++i) {
+		if (buck_addrs[i] == rdev->desc->enable_reg) {
+			ret = s2mpu06_read_reg(static_info->i2c, rdev->desc->enable_reg, &val);
+			pr_info("%s %s: BUCK%d 0x%x = 0x%x (EN=%d)\n", \
+					PMIC_NAME, str, i+1, rdev->desc->enable_reg, val, (val >> 6));
+			return ret;
+		}
+	}
+
+	for (i = 0; i < PMIC_NUM_OF_LDOS; ++i) {
+		if (ldo_addrs[i] == rdev->desc->enable_reg) {
+			ret = s2mpu06_read_reg(static_info->i2c, rdev->desc->enable_reg, &val);
+			pr_info("%s %s: LDO%d 0x%x = 0x%x (EN=%d)\n", \
+					PMIC_NAME, str, i+1, rdev->desc->enable_reg, val, (val >> 6));
+			return ret;
+		}
+	}
+
+	return 0;
+}
+#endif
+
+#ifdef CONFIG_EXYNOS_SNAPSHOT_REGULATOR
 static char *rdev_name(struct regulator_dev *rdev)
 {
 	if (rdev->desc->name)
@@ -50,6 +104,7 @@ static char *rdev_name(struct regulator_dev *rdev)
 	else
 		return "";
 }
+#endif
 
 /* Some LDOs supports [LPM/Normal]ON mode during suspend state */
 static int s2m_set_mode(struct regulator_dev *rdev,
@@ -81,46 +136,113 @@ static int s2m_set_mode(struct regulator_dev *rdev,
 		return ret;
 
 	s2mpu06->opmode[id] = val;
+
+#ifdef CONFIG_SEC_DEBUG_PMIC
+	s2m_debug_reg(rdev, "set_mode");
+#endif
 	return 0;
 }
 
 static int s2m_enable(struct regulator_dev *rdev)
 {
 	struct s2mpu06_info *s2mpu06 = rdev_get_drvdata(rdev);
+	int ret;
+	int id = rdev_get_id(rdev);
+	u8 reg = S2MPU06_PMIC_REG_EXT_CTRL, val, mask;
 
-	return s2mpu06_update_reg(s2mpu06->i2c, rdev->desc->enable_reg,
-				  s2mpu06->opmode[rdev_get_id(rdev)],
-				  rdev->desc->enable_mask);
+	switch (id) {
+	case S2MPU06_LDO4:
+		val = mask = 1;
+		break;
+	case S2MPU06_LDO14:
+		val = mask = 2;
+		break;
+	case S2MPU06_LDO15:
+		val = mask = 4;
+		break;
+	case S2MPU06_LDO16:
+		val = mask = 8;
+		break;
+	default:
+		reg = rdev->desc->enable_reg;
+		val = s2mpu06->opmode[id];
+		mask = rdev->desc->enable_mask;
+		break;
+	}
+
+	ret = s2mpu06_update_reg(s2mpu06->i2c, reg, val, mask);
+#ifdef CONFIG_SEC_DEBUG_PMIC
+	s2m_debug_reg(rdev, "regulator_enable");
+#endif
+	return ret;
 }
 
 static int s2m_disable_regmap(struct regulator_dev *rdev)
 {
 	struct s2mpu06_info *s2mpu06 = rdev_get_drvdata(rdev);
-	unsigned int val;
+	int ret;
+	int id = rdev_get_id(rdev);
+	u8 reg = S2MPU06_PMIC_REG_EXT_CTRL, val = 0, mask;
 
-	if (rdev->desc->enable_is_inverted)
-		val = rdev->desc->enable_mask;
-	else
-		val = 0;
+	switch (id) {
+	case S2MPU06_LDO4:
+		mask = 1;
+		break;
+	case S2MPU06_LDO14:
+		mask = 2;
+		break;
+	case S2MPU06_LDO15:
+		mask = 4;
+		break;
+	case S2MPU06_LDO16:
+		mask = 8;
+		break;
+	default:
+		reg = rdev->desc->enable_reg;
+		val = rdev->desc->enable_is_inverted ?
+			rdev->desc->enable_mask : 0;
+		mask = rdev->desc->enable_mask;
+		break;
+	}
 
-	return s2mpu06_update_reg(s2mpu06->i2c, rdev->desc->enable_reg,
-				  val, rdev->desc->enable_mask);
+	ret = s2mpu06_update_reg(s2mpu06->i2c, reg, val, mask);
+#ifdef CONFIG_SEC_DEBUG_PMIC
+	s2m_debug_reg(rdev, "regulator_disable");
+#endif
+	return ret;
 }
 
 static int s2m_is_enabled_regmap(struct regulator_dev *rdev)
 {
 	struct s2mpu06_info *s2mpu06 = rdev_get_drvdata(rdev);
-	int ret;
-	u8 val;
+	int ret, id = rdev_get_id(rdev);
+	u8 reg = S2MPU06_PMIC_REG_EXT_CTRL, val, mask;
 
-	ret = s2mpu06_read_reg(s2mpu06->i2c, rdev->desc->enable_reg, &val);
+	switch (id) {
+	case S2MPU06_LDO4:
+		mask = 1;
+		break;
+	case S2MPU06_LDO14:
+		mask = 2;
+		break;
+	case S2MPU06_LDO15:
+		mask = 4;
+		break;
+	case S2MPU06_LDO16:
+		mask = 8;
+		break;
+	default:
+		reg = rdev->desc->enable_reg;
+		mask = rdev->desc->enable_mask;
+		break;
+	}
+
+	ret = s2mpu06_read_reg(s2mpu06->i2c, reg, &val);
 	if (ret)
 		return ret;
 
-	if (rdev->desc->enable_is_inverted)
-		return (val & rdev->desc->enable_mask) == 0;
-	else
-		return (val & rdev->desc->enable_mask) != 0;
+	return rdev->desc->enable_is_inverted ?
+		!(val & mask) : !!(val & mask);
 }
 
 static int get_ramp_delay(int ramp_delay)
@@ -274,6 +396,48 @@ static int s2m_set_voltage_time_sel(struct regulator_dev *rdev,
 
 	return 0;
 }
+
+#ifdef CONFIG_SEC_DEBUG_PMIC
+static int _pmic_debug_print_all_regulators(void)
+{
+	u8 val;
+	int i;
+
+	if (!static_info)
+		return 0;
+
+	for (i = 0; i < PMIC_NUM_OF_BUCKS; ++i) {
+		s2mpu06_read_reg(static_info->i2c, buck_addrs[i], &val);
+		pr_info("%s Buck%d 0x%0x = 0x%x (EN=0x%x)\n", \
+			PMIC_NAME, i+1, buck_addrs[i], val, (val >> 6));
+	}
+
+	for (i = 0; i < PMIC_NUM_OF_LDOS; ++i) {
+		s2mpu06_read_reg(static_info->i2c, ldo_addrs[i], &val);
+		pr_info("%s LDO%02d 0x%0x = 0x%x (EN=0x%x)\n", \
+			PMIC_NAME, i+1, ldo_addrs[i], val, (val >> 6));
+	}
+
+	s2mpu06_read_reg(static_info->i2c, 0x3B, &val);
+	pr_info("%s DRAM_USIM 0x%x = 0x%x\n", PMIC_NAME, 0x3B, val);
+
+	s2mpu06_read_reg(static_info->i2c, 0xFF, &val);
+	pr_info("%s EXT_CTRL 0x%x = 0x%x\n", PMIC_NAME, 0xFF, val);
+	
+	return 0;
+}
+
+static int pmic_debug_print_all_regulators(struct notifier_block *this,
+		unsigned long event, void *ptr)
+{
+	switch (event) {
+	case PM_SUSPEND_PREPARE:
+		_pmic_debug_print_all_regulators();
+		break;
+	}
+	return NOTIFY_DONE;
+}
+#endif
 
 static struct regulator_ops s2mpu06_ldo_ops = {
 	.list_voltage		= regulator_list_voltage_linear,
@@ -460,6 +624,92 @@ static int s2mpu06_pmic_dt_parse_pdata(struct s2mpu06_dev *iodev,
 }
 #endif /* CONFIG_OF */
 
+#ifdef CONFIG_DEBUG_FS
+static ssize_t s2mpu06_i2caddr_read(struct file *file, char __user *user_buf,
+					size_t count, loff_t *ppos)
+{
+	char buf[10];
+	ssize_t ret;
+
+	ret = snprintf(buf, sizeof(buf), "0x%x\n", i2caddr);
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, ret);
+}
+
+static ssize_t s2mpu06_i2caddr_write(struct file *file, const char __user *user_buf,
+					size_t count, loff_t *ppos)
+{
+	char buf[10];
+	ssize_t len;
+	u8 val;
+
+	len = simple_write_to_buffer(buf, sizeof(buf) - 1, ppos, user_buf, count);
+	if (len < 0)
+		return len;
+
+	buf[len] = '\0';
+
+	if (!kstrtou8(buf, 0, &val))
+		i2caddr = val;
+
+	return len;
+}
+
+static ssize_t s2mpu06_i2cdata_read(struct file *file, char __user *user_buf,
+					size_t count, loff_t *ppos)
+{
+	char buf[10];
+	ssize_t ret;
+
+	ret = s2mpu06_read_reg(dbgi2c, i2caddr, &i2cdata);
+	if (ret)
+		return ret;
+
+	ret = snprintf(buf, sizeof(buf), "0x%x\n", i2cdata);
+	if (ret < 0)
+		return ret;
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, ret);
+}
+
+static ssize_t s2mpu06_i2cdata_write(struct file *file, const char __user *user_buf,
+					size_t count, loff_t *ppos)
+{
+	char buf[10];
+	ssize_t len, ret;
+	u8 val;
+
+	len = simple_write_to_buffer(buf, sizeof(buf) - 1, ppos, user_buf, count);
+	if (len < 0)
+		return len;
+
+	buf[len] = '\0';
+
+	if (!kstrtou8(buf, 0, &val)) {
+		ret = s2mpu06_write_reg(dbgi2c, i2caddr, val);
+		if (ret < 0)
+			return ret;
+	}
+
+	return len;
+}
+
+static const struct file_operations s2mpu06_i2caddr_fops = {
+	.open = simple_open,
+	.read = s2mpu06_i2caddr_read,
+	.write = s2mpu06_i2caddr_write,
+	.llseek = default_llseek,
+};
+static const struct file_operations s2mpu06_i2cdata_fops = {
+	.open = simple_open,
+	.read = s2mpu06_i2cdata_read,
+	.write = s2mpu06_i2cdata_write,
+	.llseek = default_llseek,
+};
+#endif
+
 static int s2mpu06_pmic_probe(struct platform_device *pdev)
 {
 	struct s2mpu06_dev *iodev = dev_get_drvdata(pdev->dev.parent);
@@ -514,6 +764,22 @@ static int s2mpu06_pmic_probe(struct platform_device *pdev)
 
 	s2mpu06->num_regulators = pdata->num_regulators;
 
+#ifdef CONFIG_DEBUG_FS
+	dbgi2c = s2mpu06->i2c;
+	s2mpu06_root = debugfs_create_dir("s2mpu06-regs", NULL);
+	s2mpu06_i2caddr = debugfs_create_file("i2caddr", 0644, s2mpu06_root, NULL, &s2mpu06_i2caddr_fops);
+	s2mpu06_i2cdata = debugfs_create_file("i2cdata", 0644, s2mpu06_root, NULL, &s2mpu06_i2cdata_fops);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_PMIC
+	s2mpu06->pm_notifier.notifier_call = pmic_debug_print_all_regulators;
+	ret = register_pm_notifier(&s2mpu06->pm_notifier);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to setup pm notifier\n");
+		goto err;
+	}
+#endif
+
 	pr_info("%s pmic prove complete\n", __func__);
 	return 0;
 
@@ -529,6 +795,16 @@ static int s2mpu06_pmic_remove(struct platform_device *pdev)
 	struct s2mpu06_info *s2mpu06 = platform_get_drvdata(pdev);
 	int i;
 
+#ifdef CONFIG_SEC_DEBUG_PMIC
+	unregister_pm_notifier(&s2mpu06->pm_notifier);
+#endif
+
+#ifdef CONFIG_DEBUG_FS
+	debugfs_remove_recursive(s2mpu06_i2cdata);
+	debugfs_remove_recursive(s2mpu06_i2caddr);
+	debugfs_remove_recursive(s2mpu06_root);
+#endif
+
 	for (i = 0; i < S2MPU06_REGULATOR_MAX; i++)
 		regulator_unregister(s2mpu06->rdev[i]);
 
@@ -541,10 +817,38 @@ static const struct platform_device_id s2mpu06_pmic_id[] = {
 };
 MODULE_DEVICE_TABLE(platform, s2mpu06_pmic_id);
 
+#define SYNC_ON		0x4
+#define SYNC_OFF	0x0
+static int s2mpu06_pmic_suspend(struct device *dev)
+{
+	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
+	struct s2mpu06_info *s2mpu06 = platform_get_drvdata(pdev);
+	s2mpu06_update_reg(s2mpu06->i2c, S2MPU06_PMIC_REG_L6DVS, SYNC_OFF, 0x4);
+	s2mpu06_write_reg(s2mpu06->i2c, S2MPU06_PMIC_REG_B2CTRL2, 0x12); /* 1.25V */
+	s2mpu06_write_reg(s2mpu06->i2c, S2MPU06_PMIC_REG_B3CTRL2, 0x2E); /* 1.95V */
+	return 0;
+}
+
+static int s2mpu06_pmic_resume(struct device *dev)
+{
+	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
+	struct s2mpu06_info *s2mpu06 = platform_get_drvdata(pdev);
+	s2mpu06_update_reg(s2mpu06->i2c, S2MPU06_PMIC_REG_L6DVS, SYNC_ON, 0x4);
+	s2mpu06_write_reg(s2mpu06->i2c, S2MPU06_PMIC_REG_B2CTRL2, 0x16); /* 1.35V */
+	s2mpu06_write_reg(s2mpu06->i2c, S2MPU06_PMIC_REG_B3CTRL2, 0x30); /* 2V */
+	return 0;
+}
+
+static const struct dev_pm_ops s2mpu06_pmic_pm_ops = {
+	.suspend_late = s2mpu06_pmic_suspend,
+	.resume_early = s2mpu06_pmic_resume,
+};
+
 static struct platform_driver s2mpu06_pmic_driver = {
 	.driver = {
 		.name = "s2mpu06-regulator",
 		.owner = THIS_MODULE,
+		.pm = &s2mpu06_pmic_pm_ops,
 	},
 	.probe = s2mpu06_pmic_probe,
 	.remove = s2mpu06_pmic_remove,

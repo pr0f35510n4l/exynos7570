@@ -61,11 +61,6 @@ scsc_wlan-y += wakelock.o
 scsc_wlan-y += hip.o
 scsc_wlan-y += cm_if.o
 
-ifeq ($(CONFIG_SCSC_WLAN_OXYGEN_ENABLE),y)
-scsc_wlan-y += oxygen_ioctl.o
-ccflags-y += -DCONFIG_SCSC_WLAN_OXYGEN_ENABLE
-endif
-
 ifeq ($(CONFIG_SCSC_WLAN_KIC_OPS),y)
 scsc_wlan-y += kic.o
 endif

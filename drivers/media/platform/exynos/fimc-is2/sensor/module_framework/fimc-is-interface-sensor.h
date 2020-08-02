@@ -377,6 +377,7 @@ struct fimc_is_cis_ops {
 	cis_func_type cis_read_sysreg; /* TBD */
 	cis_func_type cis_read_userreg; /* TBD */
 	int (*cis_wait_streamoff)(struct v4l2_subdev *subdev);
+	void (*cis_data_calculation)(struct v4l2_subdev *subdev, u32 mode);
 #ifdef CONFIG_SENSOR_RETENTION_USE
 	int (*cis_retention_prepare)(struct v4l2_subdev *subdev);
 	int (*cis_retention_crc_check)(struct v4l2_subdev *subdev);

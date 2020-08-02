@@ -1,10 +1,11 @@
 /*
- * Copyright (c) 2013 Samsung Electronics Co., Ltd.
+ * Copyright (c) 2016 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  *
  * Exynos-SnapShot debugging framework for Exynos SoC
  *
  * Author: Hosung Kim <Hosung0.kim@samsung.com>
+ * Updated for S5E7880: JK Kim (jk.man.kim@)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -34,6 +35,10 @@
 #include <linux/clk-private.h>
 #include <linux/input.h>
 #include <linux/of_address.h>
+#ifdef CONFIG_SEC_PM_DEBUG
+#include <linux/uaccess.h>
+#include <linux/proc_fs.h>
+#endif
 
 #include <asm/cacheflush.h>
 #include <asm/ptrace.h>
@@ -47,12 +52,22 @@
 #include <linux/i2c.h>
 #include <linux/spi/spi.h>
 
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#include <linux/sec_debug_hard_reset_hook.h>
+#endif
+
+#ifdef CONFIG_SEC_BOOTSTAT
+#include <linux/sec_ext.h>
+#endif
+
 /*  Size domain */
 #define ESS_KEEP_HEADER_SZ		(SZ_256 * 3)
 #define ESS_HEADER_SZ			SZ_4K
 #define ESS_MMU_REG_SZ			SZ_4K
 #define ESS_CORE_REG_SZ			SZ_4K
 #define ESS_HEADER_TOTAL_SZ		(ESS_HEADER_SZ + ESS_MMU_REG_SZ + ESS_CORE_REG_SZ)
+#define ESS_HEADER_ALLOC_SZ		SZ_2M
 
 /*  Length domain */
 #define ESS_LOG_STRING_LENGTH		SZ_128
@@ -74,6 +89,7 @@
 #define ESS_SIGN_ALIVE			0xFACE
 #define ESS_SIGN_DEAD			0xDEAD
 #define ESS_SIGN_PANIC			0xBABA
+#define ESS_SIGN_SAFE_FAULT		0xFAFA
 #define ESS_SIGN_NORMAL_REBOOT		0xCAFE
 #define ESS_SIGN_FORCE_REBOOT		0xDAFE
 
@@ -94,6 +110,7 @@ struct exynos_ss_base {
 	size_t paddr;
 	unsigned int persist;
 	unsigned int enabled;
+	unsigned int enabled_init;
 };
 
 struct exynos_ss_item {
@@ -414,6 +431,7 @@ struct exynos_ss_desc {
 	unsigned int log_sfr_num;
 	unsigned int log_pstore_num;
 	unsigned int log_etm_num;
+	bool need_header;
 
 	unsigned int callstack;
 	int hardlockup;
@@ -427,8 +445,12 @@ struct exynos_ss_interface {
 
 #ifdef CONFIG_S3C2410_WATCHDOG
 extern int s3c2410wdt_set_emergency_stop(void);
+extern int s3c2410wdt_set_emergency_reset(unsigned int timeout);
+extern int s3c2410wdt_keepalive_emergency(void);
 #else
-#define s3c2410wdt_set_emergency_stop()	(-1)
+#define s3c2410wdt_set_emergency_stop() 	(-1)
+#define s3c2410wdt_set_emergency_reset(a)	do { } while(0)
+#define s3c2410wdt_keepalive_emergency()	do { } while(0)
 #endif
 extern void *return_address(int);
 extern void (*arm_pm_restart)(char str, const char *cmd);
@@ -441,10 +463,20 @@ extern void register_hook_logbuf(void (*)(const char));
 extern void register_hook_logbuf(void (*)(const char *, size_t));
 #endif
 extern void register_hook_logger(void (*)(const char *, const char *, size_t));
-
+#ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
+void register_hook_pstore_log(void (*func)(const char *name, const char *buf, size_t size));
+#endif
 extern int exynos_check_hardlockup_reason(void);
 
 typedef int (*ess_initcall_t)(const struct device_node *);
+
+#ifdef CONFIG_SEC_PM_DEBUG
+static bool sec_log_full;
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_SUMMARY
+static void (*func_hook_auto_comm_lastfreq)(int type, int old_freq, int new_freq, u64 time);
+#endif
 
 /*
  * ---------------------------------------------------------------------------
@@ -457,28 +489,30 @@ typedef int (*ess_initcall_t)(const struct device_node *);
 static struct exynos_ss_item ess_items[] = {
 /*****************************************************************/
 #ifndef CONFIG_EXYNOS_SNAPSHOT_MINIMIZED_MODE
-	{"log_kevents",	{SZ_8M,		0, 0, false, true}, NULL ,NULL, 0},
-	{"log_kernel",	{SZ_2M,		0, 0, false, true}, NULL ,NULL, 0},
+	{"log_kevents",	{SZ_8M,		0, 0, false, true, true}, NULL ,NULL, 0},
+	{"log_kernel",	{SZ_2M,		0, 0, false, true, true}, NULL ,NULL, 0},
 #ifdef CONFIG_EXYNOS_SNAPSHOT_HOOK_LOGGER
-	{"log_platform",{SZ_4M,		0, 0, false, true}, NULL ,NULL, 0},
+	{"log_platform",{SZ_4M,		0, 0, false, true, true}, NULL ,NULL, 0},
 #endif
+	{"log_radio",	{SZ_2M,		0, 0, false, true, true}, NULL ,NULL, 0},
 #ifdef CONFIG_EXYNOS_SNAPSHOT_SFRDUMP
-	{"log_sfr",	{SZ_4M,		0, 0, false, true}, NULL ,NULL, 0},
+	{"log_sfr",	{SZ_4M,		0, 0, false, true, true}, NULL ,NULL, 0},
 #endif
 #ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
-	{"log_pstore",	{SZ_2M,		0, 0, true, true}, NULL ,NULL, 0},
+	{"log_pstore",	{SZ_2M,		0, 0, true, true, true}, NULL ,NULL, 0},
 #endif
 #ifdef CONFIG_EXYNOS_CORESIGHT_ETR
-	{"log_etm",	{SZ_8M,		0, 0, true, true}, NULL ,NULL, 0},
+	{"log_etm",	{SZ_8M,		0, 0, true, true, true}, NULL ,NULL, 0},
 #endif
 #else /* MINIMIZED MODE */
-	{"log_kevents",	{SZ_2M,		0, 0, false, true}, NULL ,NULL, 0},
-	{"log_kernel",	{SZ_2M,		0, 0, false, true}, NULL ,NULL, 0},
+	{"log_kevents",	{SZ_2M,		0, 0, false, true, true}, NULL ,NULL, 0},
+	{"log_kernel",	{SZ_2M,		0, 0, false, true, true}, NULL ,NULL, 0},
 #ifdef CONFIG_EXYNOS_SNAPSHOT_HOOK_LOGGER
-	{"log_platform",{SZ_2M,		0, 0, false, true}, NULL ,NULL, 0},
+	{"log_platform",{SZ_4M,		0, 0, false, true, true}, NULL ,NULL, 0},
 #endif
+	{"log_radio",	{SZ_2M,		0, 0, false, true, true}, NULL ,NULL, 0},
 #ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
-	{"log_pstore",	{SZ_2M,		0, 0, true, true}, NULL ,NULL, 0},
+	{"log_pstore",	{SZ_2M,		0, 0, true, true, true}, NULL ,NULL, 0},
 #endif
 #endif
 };
@@ -552,6 +586,9 @@ DEFINE_PER_CPU(struct exynos_ss_mmu_reg *, ess_mmu_reg);
 
 static void exynos_ss_save_system(struct exynos_ss_mmu_reg *mmu_reg)
 {
+	if (!exynos_ss_get_enable("log_kevents", true))
+		return;
+
 #ifdef CONFIG_ARM64
 	asm("mrs x1, SCTLR_EL1\n\t"		/* SCTLR_EL1 */
 		"str x1, [%0]\n\t"
@@ -624,27 +661,34 @@ static void exynos_ss_save_system(struct exynos_ss_mmu_reg *mmu_reg)
 
 static void exynos_ss_core_power_stat(unsigned int val, unsigned cpu)
 {
-	__raw_writel(val, (S5P_VA_SS_CORE_POWER_STAT + cpu * 4));
+	if(exynos_ss_get_enable("log_kevents", true))
+		__raw_writel(val, (S5P_VA_SS_CORE_POWER_STAT + cpu * 4));
 }
 
 static unsigned int exynos_ss_get_core_panic_stat(unsigned cpu)
 {
-	return __raw_readl(S5P_VA_SS_CORE_PANIC_STAT + cpu * 4);
+	if(exynos_ss_get_enable("log_kevents", true))
+			return __raw_readl(S5P_VA_SS_CORE_PANIC_STAT + cpu * 4);
+	else
+			return 0;
 }
 
 static void exynos_ss_set_core_panic_stat(unsigned int val, unsigned cpu)
 {
-	__raw_writel(val, (S5P_VA_SS_CORE_PANIC_STAT + cpu * 4));
+	if (exynos_ss_get_enable("log_kevents", true))
+		__raw_writel(val, (S5P_VA_SS_CORE_PANIC_STAT + cpu * 4));
 }
 
 static void exynos_ss_scratch_reg(unsigned int val)
 {
-	__raw_writel(val, S5P_VA_SS_SCRATCH);
+	if (exynos_ss_get_enable("log_kevents", true) || ess_desc.need_header)
+		__raw_writel(val, S5P_VA_SS_SCRATCH);
 }
 
 static void exynos_ss_report_reason(unsigned int val)
 {
-	__raw_writel(val, S5P_VA_SS_EMERGENCY_REASON);
+	if (exynos_ss_get_enable("log_kevents", true))
+		__raw_writel(val, S5P_VA_SS_EMERGENCY_REASON);
 }
 
 unsigned int exynos_ss_get_item_size(char* name)
@@ -680,6 +724,10 @@ EXPORT_SYMBOL(exynos_ss_get_hardlockup);
 int exynos_ss_set_hardlockup(int val)
 {
 	unsigned long flags;
+
+	if (unlikely(!ess_base.enabled))
+		return 0;
+
 	spin_lock_irqsave(&ess_desc.lock, flags);
 	ess_desc.hardlockup = val;
 	spin_unlock_irqrestore(&ess_desc.lock, flags);
@@ -692,6 +740,14 @@ int exynos_ss_prepare_panic(void)
 	unsigned cpu;
 	int cpu_is_enabled;
 
+	if (unlikely(!ess_base.enabled))
+		return 0;
+	/*
+	 * kick watchdog to prevent unexpected reset during panic sequence
+	 * and it prevents the hang during panic sequence by watchedog
+	 */
+	s3c2410wdt_keepalive_emergency();
+
 	for (cpu = 0; cpu < ESS_NR_CPUS; cpu++) {
 #ifdef CONFIG_PMUCAL_MOD
 		cpu_is_enabled = cal_cpu_status(cpu);
@@ -703,9 +759,6 @@ int exynos_ss_prepare_panic(void)
 		else
 			exynos_ss_core_power_stat(ESS_SIGN_DEAD, cpu);
 	}
-	/* stop to watchdog for preventing unexpected reset
-	 * during printing panic message */
-	ess_desc.no_wdt_dev = s3c2410wdt_set_emergency_stop();
 
 	if(exynos_check_hardlockup_reason()) {
 		/* no core got stucks in EL3 monitor */
@@ -717,24 +770,33 @@ int exynos_ss_prepare_panic(void)
 }
 EXPORT_SYMBOL(exynos_ss_prepare_panic);
 
-int exynos_ss_post_panic(void)
+int exynos_ss_post_panic(void *pv_regs)
 {
+	if (ess_base.enabled) {
 #ifdef CONFIG_EXYNOS_SNAPSHOT_SFRDUMP
-	exynos_ss_dump_sfr();
+		exynos_ss_dump_sfr();
 #endif
-	exynos_ss_save_context(NULL);
-	flush_cache_all();
+		exynos_ss_save_context(NULL);
+		flush_cache_all();
 #ifdef CONFIG_EXYNOS_SNAPSHOT_PANIC_REBOOT
-	if (!ess_desc.no_wdt_dev) {
+		if (!ess_desc.no_wdt_dev) {
 #ifdef CONFIG_EXYNOS_SNAPSHOT_WATCHDOG_RESET
-		if (ess_desc.hardlockup || num_online_cpus() > 1) {
-			/* for stall cpu */
-			while(1)
-				wfi();
+			if (ess_desc.hardlockup || num_online_cpus() > 1) {
+				/* for stall cpu */
+				while(1)
+					wfi();
+			}
+#endif
 		}
 #endif
 	}
-	arm_pm_restart(0, "sw reset");
+#ifdef CONFIG_SEC_DEBUG
+	hard_reset_delay();
+	sec_debug_post_panic_handler();
+#endif
+
+#ifdef CONFIG_EXYNOS_SNAPSHOT_PANIC_REBOOT
+	arm_pm_restart(0, "panic");
 #endif
 	/* for stall cpu when not enabling panic reboot */
 	while(1)
@@ -749,6 +811,10 @@ EXPORT_SYMBOL(exynos_ss_post_panic);
 
 int exynos_ss_dump_panic(char *str, size_t len)
 {
+	if (unlikely(!ess_base.enabled) ||
+		!exynos_ss_get_enable("log_kevents", true))
+		return 0;
+
 	/*  This function is only one which runs in panic funcion */
 	if (str && len && len < 1024)
 		memcpy(S5P_VA_SS_PANIC_STRING, str, len);
@@ -761,6 +827,9 @@ int exynos_ss_post_reboot(void)
 {
 	int cpu;
 
+	if (unlikely(!ess_base.enabled))
+		return 0;
+
 	/* clear ESS_SIGN_PANIC when normal reboot */
 	for (cpu = 0; cpu < ESS_NR_CPUS; cpu++)
 		exynos_ss_set_core_panic_stat(ESS_SIGN_RESET, cpu);
@@ -768,6 +837,32 @@ int exynos_ss_post_reboot(void)
 	return 0;
 }
 EXPORT_SYMBOL(exynos_ss_post_reboot);
+
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+
+unsigned long merr_symptom;
+
+#define L2MERR0SR	0
+#define TBWMERR0SR	1
+#define LSMERR0SR	2
+#define FEMERR0SR	3
+#define L2MERRSR	4
+#define CPUMERRSR	5
+
+#define FATAL_MASK_M	(BIT(1) | BIT(0))
+#define FATAL_MASK_A	(BIT(63) | BIT(31))
+
+#define hook_merr(merr, reg, mask)		\
+({						\
+	if ((reg & mask) == mask)		\
+		merr_symptom |= (1 << merr);	\
+})
+
+#else
+
+#define hook_merr(merr, reg, mask)	({})
+
+#endif
 
 int exynos_ss_dump(void)
 {
@@ -781,6 +876,8 @@ int exynos_ss_dump(void)
 		"mrs %1, S3_1_c15_c2_3\n"
 		: "=r" (reg1), "=r" (reg2));
 	pr_emerg("CPUMERRSR: %016lx, L2MERRSR: %016lx\n", reg1, reg2);
+	hook_merr(CPUMERRSR, reg1, FATAL_MASK_A);
+	hook_merr(L2MERRSR, reg2, FATAL_MASK_A);	
 #else
 	unsigned long reg0;
 	asm ("mrc p15, 0, %0, c0, c0, 0\n": "=r" (reg0));
@@ -801,48 +898,44 @@ EXPORT_SYMBOL(exynos_ss_dump);
 
 int exynos_ss_save_core(void *v_regs)
 {
-	register unsigned long sp asm ("sp");
 	struct pt_regs *regs = (struct pt_regs *)v_regs;
 	struct pt_regs *core_reg =
 			per_cpu(ess_core_reg, smp_processor_id());
 
+	if(!exynos_ss_get_enable("log_kevents", true))
+		return 0;
+
 	if (!regs) {
-		asm("str x0, [%0, #0]\n\t"
-		    "mov x0, %0\n\t"
-		    "str x1, [x0, #8]\n\t"
-		    "str x2, [x0, #16]\n\t"
-		    "str x3, [x0, #24]\n\t"
-		    "str x4, [x0, #32]\n\t"
-		    "str x5, [x0, #40]\n\t"
-		    "str x6, [x0, #48]\n\t"
-		    "str x7, [x0, #56]\n\t"
-		    "str x8, [x0, #64]\n\t"
-		    "str x9, [x0, #72]\n\t"
-		    "str x10, [x0, #80]\n\t"
-		    "str x11, [x0, #88]\n\t"
-		    "str x12, [x0, #96]\n\t"
-		    "str x13, [x0, #104]\n\t"
-		    "str x14, [x0, #112]\n\t"
-		    "str x15, [x0, #120]\n\t"
-		    "str x16, [x0, #128]\n\t"
-		    "str x17, [x0, #136]\n\t"
-		    "str x18, [x0, #144]\n\t"
-		    "str x19, [x0, #152]\n\t"
-		    "str x20, [x0, #160]\n\t"
-		    "str x21, [x0, #168]\n\t"
-		    "str x22, [x0, #176]\n\t"
-		    "str x23, [x0, #184]\n\t"
-		    "str x24, [x0, #192]\n\t"
-		    "str x25, [x0, #200]\n\t"
-		    "str x26, [x0, #208]\n\t"
-		    "str x27, [x0, #216]\n\t"
-		    "str x28, [x0, #224]\n\t"
-		    "str x29, [x0, #232]\n\t"
-		    "str x30, [x0, #240]\n\t" :
-		    : "r"(core_reg));
-		core_reg->sp = (unsigned long)(sp);
-		core_reg->pc =
-			(unsigned long)(core_reg->regs[30] - sizeof(unsigned int));
+		asm volatile(
+			"stp x0, x1, [%0, #8 * 0]\n\t"
+			"stp x2, x3, [%0, #8 * 2]\n\t"
+			"stp x4, x5, [%0, #8 * 4]\n\t"
+			"stp x6, x7, [%0, #8 * 6]\n\t"
+			"stp x8, x9, [%0, #8 * 8]\n\t"
+			"stp x10, x11, [%0, #8 * 10]\n\t"
+			"stp x12, x13, [%0, #8 * 12]\n\t"
+			"stp x14, x15, [%0, #8 * 14]\n\t"
+			"stp x16, x17, [%0, #8 * 16]\n\t"
+			"stp x18, x19, [%0, #8 * 18]\n\t"
+			"stp x20, x21, [%0, #8 * 20]\n\t"
+			"stp x22, x23, [%0, #8 * 22]\n\t"
+			"stp x24, x25, [%0, #8 * 24]\n\t"
+			"stp x26, x27, [%0, #8 * 26]\n\t"
+			"stp x28, x29, [%0, #8 * 28]\n\t"
+			"stp x21, x22, [sp,#-32]!\n\t"
+			"str x23, [sp,#16]\n\t"
+			"mov x21, sp\n\t"
+			"stp x30, x21, [%0, #8 * 30]\n\t"
+			"adr x22, 1f\n\t"
+			"mrs x23, spsr_el1\n\t"
+			"stp x22, x23, [%0, #8 * 32]\n\t"
+			"ldr x23, [sp,#16]\n\t"
+			"ldp x21, x22, [sp],#32\n\t"
+		"1:"
+			:
+			: "r" (core_reg)
+			: "memory"
+		);
 	} else {
 		memcpy(core_reg, regs, sizeof(struct pt_regs));
 	}
@@ -857,6 +950,9 @@ int exynos_ss_save_context(void *v_regs)
 {
 	unsigned long flags;
 	struct pt_regs *regs = (struct pt_regs *)v_regs;
+
+	if (unlikely(!ess_base.enabled))
+		return 0;
 
 	//exynos_trace_stop();
 
@@ -912,7 +1008,7 @@ int exynos_ss_try_enable(const char *name, unsigned long long duration)
 	int ret = -1;
 
 	/* If ESS was disabled, just return */
-	if (unlikely(!ess_base.enabled))
+	if (unlikely(!ess_base.enabled) || !exynos_ss_get_enable("log_kevents", true))
 		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(ess_items); i++) {
@@ -935,7 +1031,7 @@ int exynos_ss_try_enable(const char *name, unsigned long long duration)
 }
 EXPORT_SYMBOL(exynos_ss_try_enable);
 
-int exynos_ss_get_enable(const char *name)
+int exynos_ss_get_enable(const char *name, bool init)
 {
 	struct exynos_ss_item *item = NULL;
 	unsigned long i;
@@ -947,7 +1043,10 @@ int exynos_ss_get_enable(const char *name)
 		for (i = 0; i < ARRAY_SIZE(ess_items); i++) {
 			if (!strncmp(ess_items[i].name, name, strlen(name))) {
 				item = &ess_items[i];
-				ret = item->entry.enabled;
+				if (init)
+					ret = item->entry.enabled_init;
+				else
+					ret = item->entry.enabled;
 				break;
 			}
 		}
@@ -969,6 +1068,13 @@ static inline int exynos_ss_check_eob(struct exynos_ss_item *item,
 	else
 		return 0;
 }
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_SUMMARY
+void register_set_auto_comm_lastfreq(void (*func)(int type, int old_freq, int new_freq, u64 time))
+{
+	func_hook_auto_comm_lastfreq = func;
+}
+#endif
 
 #ifdef CONFIG_EXYNOS_SNAPSHOT_HOOK_LOGGER
 static inline void exynos_ss_hook_logger(const char *name,
@@ -1003,8 +1109,13 @@ static inline void exynos_ss_hook_logbuf(const char buf)
 	struct exynos_ss_item *item = &ess_items[ess_desc.log_kernel];
 
 	if (likely(ess_base.enabled == true && item->entry.enabled == true)) {
-		if (exynos_ss_check_eob(item, 1))
+		if (exynos_ss_check_eob(item, 1)) {
 			item->curr_ptr = item->head_ptr;
+#ifdef CONFIG_SEC_PM_DEBUG
+			sec_log_full = true;
+#endif
+			*((unsigned long long *)(item->head_ptr + item->entry.size - (size_t)0x08)) = SEC_LKMSG_MAGICKEY;
+		}
 
 		item->curr_ptr[0] = buf;
 		item->curr_ptr++;
@@ -1022,8 +1133,13 @@ static inline void exynos_ss_hook_logbuf(const char *buf, size_t size)
 	if (likely(ess_base.enabled == true && item->entry.enabled == true)) {
 		size_t last_buf, align;
 
-		if (exynos_ss_check_eob(item, size))
+		if (exynos_ss_check_eob(item, size)) {
 			item->curr_ptr = item->head_ptr;
+#ifdef CONFIG_SEC_PM_DEBUG
+			sec_log_full = true;
+#endif
+			*((unsigned long long *)(item->head_ptr + item->entry.size - (size_t)0x08)) = SEC_LKMSG_MAGICKEY;
+		}
 
 		memcpy(item->curr_ptr, buf, size);
 		item->curr_ptr += size;
@@ -1066,7 +1182,13 @@ static void exynos_ss_dump_one_task_info(struct task_struct *tsk, bool is_main)
 		state >>= 1;
 	}
 
+	/*
+	 * kick watchdog to prevent unexpected reset during panic sequence
+	 * and it prevents the hang during panic sequence by watchedog
+	 */
 	touch_softlockup_watchdog();
+	s3c2410wdt_keepalive_emergency();
+
 	pr_info("%8d %8d %8d %16lld %c(%d) %3d  %16zx %16zx  %16zx %c %16s [%s]\n",
 			tsk->pid, (int)(tsk->utime), (int)(tsk->stime),
 			tsk->se.exec_start, state_array[idx], (int)(tsk->state),
@@ -1138,6 +1260,9 @@ void exynos_ss_dump_sfr(void)
 	unsigned int reg, offset, val, size;
 	int i, ret;
 	static char buf[SZ_64];
+
+	if (unlikely(!ess_base.enabled))
+		return;
 
 	if (list_empty(&ess_desc.sfrdump_list) || unlikely(!item) ||
 		unlikely(item->entry.enabled == false)) {
@@ -1252,6 +1377,10 @@ static int exynos_ss_sfr_dump_init(struct device_node *np)
 
 #endif
 
+#ifdef CONFIG_SEC_UPLOAD
+extern void check_crash_keys_in_user(unsigned int code, int onoff);
+#endif
+
 #ifdef CONFIG_EXYNOS_SNAPSHOT_CRASH_KEY
 void exynos_ss_check_crash_key(unsigned int code, int value)
 {
@@ -1261,6 +1390,16 @@ void exynos_ss_check_crash_key(unsigned int code, int value)
 
 	static const unsigned int VOLUME_UP = KEY_VOLUMEUP;
 	static const unsigned int VOLUME_DOWN = KEY_VOLUMEDOWN;
+
+#ifdef CONFIG_SEC_DEBUG
+	hard_reset_hook(code, value);
+	if ((sec_debug_get_debug_level() & 0x1) != 0x1) {
+#ifdef CONFIG_SEC_UPLOAD
+		check_crash_keys_in_user(code, value);
+#endif
+		return;
+	}
+#endif
 
 	if (code == KEY_POWER)
 		pr_info("exynos-snapshot: POWER-KEY %s\n", value ? "pressed" : "released");
@@ -1299,10 +1438,16 @@ void exynos_ss_check_crash_key(unsigned int code, int value)
 static int exynos_ss_reboot_handler(struct notifier_block *nb,
 				    unsigned long l, void *p)
 {
+	if (unlikely(!ess_base.enabled))
+		return 0;
+
 	pr_emerg("exynos-snapshot: normal reboot [%s]\n", __func__);
 	exynos_ss_report_reason(ESS_SIGN_NORMAL_REBOOT);
 	exynos_ss_scratch_reg(ESS_SIGN_RESET);
 	exynos_ss_save_context(NULL);
+#ifdef CONFIG_SEC_DEBUG
+	sec_debug_reboot_handler();
+#endif
 
 	flush_cache_all();
 	return 0;
@@ -1311,13 +1456,17 @@ static int exynos_ss_reboot_handler(struct notifier_block *nb,
 static int exynos_ss_panic_handler(struct notifier_block *nb,
 				   unsigned long l, void *buf)
 {
+	if (unlikely(!ess_base.enabled))
+		return 0;
+
 #ifdef CONFIG_EXYNOS_SNAPSHOT_PANIC_REBOOT
 	local_irq_disable();
 	exynos_ss_report_reason(ESS_SIGN_PANIC);
 	pr_emerg("exynos-snapshot: panic - reboot[%s]\n", __func__);
 	exynos_ss_dump_task_info();
 #ifdef CONFIG_EXYNOS_CORESIGHT_PC_INFO
-	memcpy(ess_log->core, exynos_cs_pc, sizeof(ess_log->core));
+	if (exynos_ss_get_enable("log_kevents", true))
+		memcpy(ess_log->core, exynos_cs_pc, sizeof(ess_log->core));
 #endif
 	flush_cache_all();
 #else
@@ -1325,6 +1474,9 @@ static int exynos_ss_panic_handler(struct notifier_block *nb,
 	pr_emerg("exynos-snapshot: panic - normal[%s]\n", __func__);
 	exynos_ss_dump_task_info();
 	flush_cache_all();
+#endif
+#ifdef CONFIG_SEC_DEBUG
+	sec_debug_panic_handler(buf, true);
 #endif
 	return 0;
 }
@@ -1337,34 +1489,102 @@ static struct notifier_block nb_panic_block = {
 	.notifier_call = exynos_ss_panic_handler,
 };
 
-static unsigned int __init exynos_ss_remap(unsigned int base, unsigned int size)
+void exynos_ss_panic_handler_safe(struct pt_regs *regs)
 {
-	struct map_desc ess_iodesc[ESS_ITEM_MAX_NUM];
+	char text[1024];
+	size_t len;
+
+	if (unlikely(!ess_base.enabled))
+		return;
+
+	snprintf(text, 1024, "safe panic handler at cpu %d", (int)raw_smp_processor_id());
+	len = (size_t)strnlen(text, 1024);
+
+	exynos_ss_report_reason(ESS_SIGN_SAFE_FAULT);
+	exynos_ss_dump_panic(text, len);
+	s3c2410wdt_set_emergency_reset(100);
+
+}
+
+static size_t __init exynos_ss_remap(unsigned int base, unsigned int size)
+{
+	struct map_desc ess_iodesc;
 	unsigned long i;
+	unsigned int enabled_count = 0;
+	size_t pre_paddr, pre_vaddr, item_size;
+
+	/* initializing value */
+	pre_paddr = (size_t)base;
+	pre_vaddr = (size_t)S5P_VA_SS_BASE;
 
 	for (i = 0; i < ARRAY_SIZE(ess_items); i++) {
 		/* fill rest value of ess_items arrary */
-		if (i == 0) {
-			ess_items[i].entry.vaddr = (size_t)S5P_VA_SS_BASE;
-			ess_items[i].entry.paddr = (size_t)base;
-		} else {
-			ess_items[i].entry.vaddr = ess_items[i - 1].entry.vaddr
-						+ ess_items[i - 1].entry.size;
-			ess_items[i].entry.paddr = ess_items[i - 1].entry.paddr
-						+ ess_items[i - 1].entry.size;
-		}
-		ess_items[i].head_ptr = (unsigned char *)ess_items[i].entry.vaddr;
-		ess_items[i].curr_ptr = (unsigned char *)ess_items[i].entry.vaddr;
+		if (i == ess_desc.kevents_num ||
+			ess_items[i].entry.enabled_init) {
 
-		/* fill to ess_iodesc for mapping */
-		ess_iodesc[i].type = MT_NORMAL_NC;
-		ess_iodesc[i].length = ess_items[i].entry.size;
-		ess_iodesc[i].virtual = ess_items[i].entry.vaddr;
-		ess_iodesc[i].pfn = __phys_to_pfn(ess_items[i].entry.paddr);
+			if (i == ess_desc.kevents_num && ess_desc.need_header)
+				item_size = ESS_HEADER_ALLOC_SZ;
+			else
+				item_size = ess_items[i].entry.size;
+
+			ess_items[i].entry.vaddr = pre_vaddr;
+			ess_items[i].entry.paddr = pre_paddr;
+
+			ess_items[i].head_ptr = (unsigned char *)ess_items[i].entry.vaddr;
+			ess_items[i].curr_ptr = (unsigned char *)ess_items[i].entry.vaddr;
+
+			/* fill to ess_iodesc for mapping */
+			ess_iodesc.type = MT_NORMAL_NC;
+			ess_iodesc.length = item_size;
+			ess_iodesc.virtual = ess_items[i].entry.vaddr;
+			ess_iodesc.pfn = __phys_to_pfn(ess_items[i].entry.paddr);
+
+			/* For Next */
+			pre_vaddr = ess_items[i].entry.vaddr + item_size;
+			pre_paddr = ess_items[i].entry.paddr + item_size;
+
+			iotable_init(&ess_iodesc, 1);
+			enabled_count++;
+		}
+	}
+	return (size_t)(enabled_count ? S5P_VA_SS_BASE : 0);
+}
+
+static int __init exynos_ss_init_desc(void)
+{
+	unsigned int i, len;
+
+	/* initialize ess_desc */
+	memset((struct exynos_ss_desc *)&ess_desc, 0, sizeof(struct exynos_ss_desc));
+	ess_desc.callstack = CONFIG_EXYNOS_SNAPSHOT_CALLSTACK;
+	spin_lock_init(&ess_desc.lock);
+	INIT_LIST_HEAD(&ess_desc.sfrdump_list);
+
+	for (i = 0; i < ARRAY_SIZE(ess_items); i++) {
+		len = strlen(ess_items[i].name);
+		if (!strncmp(ess_items[i].name, "log_kevents", len))
+			ess_desc.kevents_num = i;
+		else if (!strncmp(ess_items[i].name, "log_kernel", len))
+			ess_desc.log_kernel_num = i;
+		else if (!strncmp(ess_items[i].name, "log_platform", len))
+			ess_desc.log_platform_num = i;
+		else if (!strncmp(ess_items[i].name, "log_sfr", len))
+			ess_desc.log_sfr_num = i;
+		else if (!strncmp(ess_items[i].name, "log_pstore", len))
+			ess_desc.log_pstore_num = i;
+		else if (!strncmp(ess_items[i].name, "log_etm", len))
+			ess_desc.log_etm_num = i;
 	}
 
-	iotable_init(ess_iodesc, ARRAY_SIZE(ess_items));
-	return (unsigned int)ess_items[0].entry.vaddr;
+	if (!ess_items[ess_desc.kevents_num].entry.enabled_init)
+		ess_desc.need_header = true;
+
+#ifdef CONFIG_S3C2410_WATCHDOG
+	ess_desc.no_wdt_dev = false;
+#else
+	ess_desc.no_wdt_dev = true;
+#endif
+	return 0;
 }
 
 static int __init exynos_ss_setup(char *str)
@@ -1372,14 +1592,25 @@ static int __init exynos_ss_setup(char *str)
 	unsigned long i;
 	size_t size = 0;
 	size_t base = 0;
-
+#ifdef CONFIG_SEC_DEBUG
+	if (sec_debug_setup()) {
+		pr_info("exynos-snapshot: disabled because sec_debug is not activated\n");
+		return -1;
+	}
+#endif
 	if (kstrtoul(str, 0, (unsigned long *)&base))
 		goto out;
 
+	exynos_ss_init_desc();
+
 	for (i = 0; i < ARRAY_SIZE(ess_items); i++) {
-		if (ess_items[i].entry.enabled)
+		if (ess_items[i].entry.enabled_init)
 			size += ess_items[i].entry.size;
 	}
+
+	/* More need the size for Header */
+	if (ess_desc.need_header)
+		size += ESS_HEADER_ALLOC_SZ;
 
 	pr_info("exynos-snapshot: try to reserve dedicated memory : 0x%zx, 0x%zx\n",
 			base, size);
@@ -1392,13 +1623,20 @@ static int __init exynos_ss_setup(char *str)
 	if (!reserve_bootmem(base, size, BOOTMEM_EXCLUSIVE)) {
 #endif
 		ess_base.paddr = base;
-		ess_base.vaddr = exynos_ss_remap(base,size);
+		ess_base.vaddr = exynos_ss_remap(base, size);
 		ess_base.size = size;
 		ess_base.enabled = false;
 
 		pr_info("exynos-snapshot: memory reserved complete : 0x%zx, 0x%zx\n",
 			base, size);
-
+#ifdef CONFIG_SEC_DEBUG
+		for (i = 0; ARRAY_SIZE(ess_items); ++i) {
+			if(!strcmp(ess_items[i].name, "log_kernel")) {
+				sec_getlog_supply_kernel((void*)phys_to_virt(ess_items[i].entry.paddr));
+				break;
+			}
+		}
+#endif
 		return 0;
 	}
 out:
@@ -1419,17 +1657,19 @@ __setup("ess_setup=", exynos_ss_setup);
  *  ---------------------------------------------------------------------
  *  -		Cores CPU register(4K)					-
  *  ---------------------------------------------------------------------
- *  -		log buffer(3Mbyte - Headers(12K))			-
+ *  -		log buffer(8Mbyte - Headers(12K))			-
  *  ---------------------------------------------------------------------
  *  -		Hooked buffer of kernel's log_buf(2Mbyte)		-
  *  ---------------------------------------------------------------------
- *  -		Hooked main logger buffer of platform(3Mbyte)		-
+ *  -		Hooked main logger buffer of platform(4Mbyte Total)	-
  *  ---------------------------------------------------------------------
- *  -		Hooked system logger buffer of platform(1Mbyte)		-
+ *  -		Hooked system logger buffer of platform			-
  *  ---------------------------------------------------------------------
- *  -		Hooked radio logger buffer of platform(?Mbyte)		-
+ *  -		Hooked radio logger buffer of platform			-
  *  ---------------------------------------------------------------------
- *  -		Hooked events logger buffer of platform(?Mbyte)		-
+ *  -		Hooked events logger buffer of platform			-
+ *  ---------------------------------------------------------------------
+ *  -		Hooked pstore (2Mbyte)					-
  *  ---------------------------------------------------------------------
  */
 static int __init exynos_ss_output(void)
@@ -1438,11 +1678,12 @@ static int __init exynos_ss_output(void)
 
 	pr_info("exynos-snapshot physical / virtual memory layout:\n");
 	for (i = 0; i < ARRAY_SIZE(ess_items); i++)
-		pr_info("%-12s: phys:0x%zx / virt:0x%zx / size:0x%zx\n",
-			ess_items[i].name,
-			ess_items[i].entry.paddr,
-			ess_items[i].entry.vaddr,
-			ess_items[i].entry.size);
+		if (ess_items[i].entry.enabled_init)
+			pr_info("%-12s: phys:0x%zx / virt:0x%zx / size:0x%zx\n",
+				ess_items[i].name,
+				ess_items[i].entry.paddr,
+				ess_items[i].entry.vaddr,
+				ess_items[i].entry.size);
 
 	return 0;
 }
@@ -1469,6 +1710,18 @@ static void __init exynos_ss_fixmap_header(void)
 	/*  set to confirm exynos-snapshot */
 	addr = (size_t *)vaddr;
 	memcpy(addr, &ess_base, sizeof(struct exynos_ss_base));
+
+	for (i = 0; i < ESS_NR_CPUS; i++) {
+		per_cpu(ess_mmu_reg, i) = (struct exynos_ss_mmu_reg *)
+					  (vaddr + ESS_HEADER_SZ +
+					   i * ESS_MMU_REG_OFFSET);
+		per_cpu(ess_core_reg, i) = (struct pt_regs *)
+					   (vaddr + ESS_HEADER_SZ + ESS_MMU_REG_SZ +
+					    i * ESS_CORE_REG_OFFSET);
+	}
+
+	if (!exynos_ss_get_enable("log_kevents", true))
+		return;
 
 	/*  kernel log buf */
 	ess_log = (struct exynos_ss_log *)(vaddr + ESS_HEADER_TOTAL_SZ);
@@ -1529,43 +1782,9 @@ static void __init exynos_ss_fixmap_header(void)
 #ifdef CONFIG_EXYNOS_SNAPSHOT_HRTIMER
 		atomic_set(&(ess_idx.hrtimer_log_idx[i]), -1);
 #endif
-		per_cpu(ess_mmu_reg, i) = (struct exynos_ss_mmu_reg *)
-					  (vaddr + ESS_HEADER_SZ +
-					   i * ESS_MMU_REG_OFFSET);
-		per_cpu(ess_core_reg, i) = (struct pt_regs *)
-					   (vaddr + ESS_HEADER_SZ + ESS_MMU_REG_SZ +
-					    i * ESS_CORE_REG_OFFSET);
 	}
 	/*  initialize kernel event to 0 except only header */
 	memset((size_t *)(vaddr + ESS_KEEP_HEADER_SZ), 0, size - ESS_KEEP_HEADER_SZ);
-}
-
-static int __init exynos_ss_init_desc(void)
-{
-	unsigned int i, len;
-
-	/* initialize ess_desc */
-	memset((struct exynos_ss_desc *)&ess_desc, 0, sizeof(struct exynos_ss_desc));
-	ess_desc.callstack = CONFIG_EXYNOS_SNAPSHOT_CALLSTACK;
-	spin_lock_init(&ess_desc.lock);
-	INIT_LIST_HEAD(&ess_desc.sfrdump_list);
-
-	for (i = 0; i < ARRAY_SIZE(ess_items); i++) {
-		len = strlen(ess_items[i].name);
-		if (!strncmp(ess_items[i].name, "log_kevents", len))
-			ess_desc.kevents_num = i;
-		else if (!strncmp(ess_items[i].name, "log_kernel", len))
-			ess_desc.log_kernel_num = i;
-		else if (!strncmp(ess_items[i].name, "log_platform", len))
-			ess_desc.log_platform_num = i;
-		else if (!strncmp(ess_items[i].name, "log_sfr", len))
-			ess_desc.log_sfr_num = i;
-		else if (!strncmp(ess_items[i].name, "log_pstore", len))
-			ess_desc.log_pstore_num = i;
-		else if (!strncmp(ess_items[i].name, "log_etm", len))
-			ess_desc.log_etm_num = i;
-	}
-	return 0;
 }
 
 static int __init exynos_ss_fixmap(void)
@@ -1578,6 +1797,9 @@ static int __init exynos_ss_fixmap(void)
 	exynos_ss_fixmap_header();
 
 	for (i = 1; i < ARRAY_SIZE(ess_items); i++) {
+		if (!ess_items[i].entry.enabled_init)
+			continue;
+
 		/*  assign kernel log information */
 		paddr = ess_items[i].entry.paddr;
 		vaddr = ess_items[i].entry.vaddr;
@@ -1614,6 +1836,10 @@ static int __init exynos_ss_fixmap(void)
 
 	/* output the information of exynos-snapshot */
 	exynos_ss_output();
+#ifdef CONFIG_SEC_DEBUG_LAST_KMSG
+	sec_debug_save_last_kmsg(ess_items[ess_desc.log_kernel_num].head_ptr,
+				 ess_items[ess_desc.log_kernel_num].curr_ptr, ess_items[ess_desc.log_kernel_num].entry.size);
+#endif
 	return 0;
 }
 
@@ -1671,7 +1897,6 @@ static int __init exynos_ss_init(void)
 	 *  --> @virtual_addr | @phy_addr | @buffer_size | @magic_key(0xDBDBDBDB)
 	 *  And then, the debug buffer is shown.
 	 */
-		exynos_ss_init_desc();
 		exynos_ss_fixmap();
 		exynos_ss_init_dt();
 		exynos_ss_scratch_reg(ESS_SIGN_SCRATCH);
@@ -1679,8 +1904,11 @@ static int __init exynos_ss_init(void)
 
 		register_hook_logbuf(exynos_ss_hook_logbuf);
 
-#ifdef CONFIG_EXYNOS_SNAPSHOT_HOOK_LOGGER
+#if defined(CONFIG_EXYNOS_SNAPSHOT_HOOK_LOGGER) && defined(CONFIG_ANDROID_LOGGER)
 		register_hook_logger(exynos_ss_hook_logger);
+#endif
+#ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
+		register_hook_pstore_log(exynos_ss_hook_logger);
 #endif
 		register_reboot_notifier(&nb_reboot_block);
 		atomic_notifier_chain_register(&panic_notifier_list, &nb_panic_block);
@@ -1740,7 +1968,7 @@ void exynos_ss_task(int cpu, void *v_task)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		unsigned long i = atomic_inc_return(&ess_idx.task_log_idx[cpu]) &
@@ -1750,7 +1978,7 @@ void exynos_ss_task(int cpu, void *v_task)
 		ess_log->task[cpu][i].task = (struct task_struct *)v_task;
 		strncpy(ess_log->task[cpu][i].task_comm,
 			ess_log->task[cpu][i].task->comm,
-			TASK_COMM_LEN);
+			TASK_COMM_LEN - 1);
 	}
 }
 
@@ -1758,7 +1986,7 @@ void exynos_ss_work(void *worker, void *v_task, void *fn, int en)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 
 	{
@@ -1768,7 +1996,7 @@ void exynos_ss_work(void *worker, void *v_task, void *fn, int en)
 		struct task_struct *task = (struct task_struct *)v_task;
 		ess_log->work[cpu][i].time = cpu_clock(cpu);
 		ess_log->work[cpu][i].worker = (struct worker *)worker;
-		strncpy(ess_log->work[cpu][i].task_comm, task->comm, TASK_COMM_LEN);
+		strncpy(ess_log->work[cpu][i].task_comm, task->comm, TASK_COMM_LEN - 1);
 		ess_log->work[cpu][i].fn = (work_func_t)fn;
 		ess_log->work[cpu][i].en = en;
 	}
@@ -1778,7 +2006,7 @@ void exynos_ss_cpuidle(int index, unsigned state, int diff, int en)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -1798,7 +2026,7 @@ void exynos_ss_suspend(void *fn, void *dev, int en)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -1817,7 +2045,7 @@ void exynos_ss_regulator(char* f_name, unsigned int addr, unsigned int volt, int
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -1841,7 +2069,7 @@ void exynos_ss_thermal(void *data, unsigned int temp, char *name, unsigned int m
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -1866,7 +2094,7 @@ void exynos_ss_mailbox(void *msg, int mode, char* f_name, void *volt)
 	u32 *volt_data = (u32 *)volt;
 	int cnt;
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -1893,7 +2121,7 @@ void exynos_ss_irq(int irq, void *fn, unsigned int val, int en)
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 	unsigned long flags;
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 
 	flags = pure_arch_local_irq_save();
@@ -1926,7 +2154,7 @@ void exynos_ss_irq_exit(unsigned int irq, unsigned long long start_time)
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 	unsigned long i;
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 
 	for (i = 0; i < ARRAY_SIZE(ess_irqexit_exlist); i++)
@@ -1959,13 +2187,16 @@ void exynos_ss_spinlock(void *v_lock, int en)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
 		unsigned index = atomic_inc_return(&ess_idx.spinlock_log_idx[cpu]);
 		unsigned long j, i = index & (ARRAY_SIZE(ess_log->spinlock[0]) - 1);
+#ifdef CONFIG_DEBUG_SPINLOCK
 		raw_spinlock_t *lock = (raw_spinlock_t *)v_lock;
+#endif
+
 #ifdef CONFIG_ARM_ARCH_TIMER
 		ess_log->spinlock[cpu][i].time = cpu_clock(cpu);
 #else
@@ -1995,7 +2226,7 @@ void exynos_ss_irqs_disabled(unsigned long flags)
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 	int cpu = raw_smp_processor_id();
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 
 	if (unlikely(flags)) {
@@ -2035,7 +2266,7 @@ void exynos_ss_clk(void *clock, const char *func_name, int mode)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -2055,7 +2286,7 @@ void exynos_ss_freq(int type, unsigned long old_freq, unsigned long target_freq,
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -2068,6 +2299,12 @@ void exynos_ss_freq(int type, unsigned long old_freq, unsigned long target_freq,
 		ess_log->freq[i].old_freq = old_freq;
 		ess_log->freq[i].target_freq = target_freq;
 		ess_log->freq[i].en = en;
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_SUMMARY
+		if(func_hook_auto_comm_lastfreq && en == ESS_FLAG_OUT)
+			func_hook_auto_comm_lastfreq(type, old_freq, target_freq, ess_log->freq[i].time);
+#endif
+
 	}
 }
 #endif
@@ -2077,7 +2314,7 @@ void exynos_ss_hrtimer(void *timer, s64 *now, void *fn, int en)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -2150,7 +2387,7 @@ void exynos_ss_acpm(unsigned long long timestamp, const char *log, unsigned int 
 		int len = strlen(log);
 
 		if (len >= 9)
-			len = 9;
+			len = 8;
 
 		ess_log->acpm[i].time = cpu_clock(cpu);
 		ess_log->acpm[i].acpm_time = timestamp;
@@ -2203,7 +2440,7 @@ void exynos_ss_reg(unsigned int read, size_t val, size_t reg, int en)
 	unsigned long i, j;
 	size_t phys_reg, start_addr, end_addr;
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 
 	if (ess_reg_exlist[0].addr == 0)
@@ -2243,7 +2480,7 @@ void exynos_ss_clockevent(unsigned long long clc, int64_t delta, void *next_even
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -2263,17 +2500,16 @@ void exynos_ss_printk(const char *fmt, ...)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
 		va_list args;
-		int ret;
 		unsigned long j, i = atomic_inc_return(&ess_idx.printk_log_idx) &
 				(ARRAY_SIZE(ess_log->printk) - 1);
 
 		va_start(args, fmt);
-		ret = vsnprintf(ess_log->printk[i].log,
+		vsnprintf(ess_log->printk[i].log,
 				sizeof(ess_log->printk[i].log), fmt, args);
 		va_end(args);
 
@@ -2291,7 +2527,7 @@ void exynos_ss_printkl(size_t msg, size_t val)
 {
 	struct exynos_ss_item *item = &ess_items[ess_desc.kevents_num];
 
-	if (unlikely(!ess_base.enabled || !item->entry.enabled))
+	if (unlikely(!ess_base.enabled || !item->entry.enabled || !item->entry.enabled_init))
 		return;
 	{
 		int cpu = raw_smp_processor_id();
@@ -2335,7 +2571,9 @@ typedef struct __attribute__((__packed__)) {
 } ess_pmsg_log_header_t;
 
 typedef struct __attribute__((__packed__)) {
+#ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
 	unsigned char id;
+#endif
 	uint16_t tid;
 	int32_t tv_sec;
 	int32_t tv_nsec;
@@ -2350,14 +2588,16 @@ typedef struct ess_logger {
 	uint16_t	level;
 	int32_t		tv_sec;
 	int32_t		tv_nsec;
+#ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
 	char		msg[0];
+#endif
 	char*		buffer;
 	void		(*func_hook_logger)(const char*, const char*, size_t);
 } __attribute__((__packed__)) ess_logger;
 
 static ess_logger logger;
 
-void register_hook_logger(void (*func)(const char *name, const char *buf, size_t size))
+void register_hook_pstore_log(void (*func)(const char *name, const char *buf, size_t size))
 {
 	logger.func_hook_logger = func;
 	logger.buffer = vmalloc(PAGE_SIZE * 3);
@@ -2365,8 +2605,9 @@ void register_hook_logger(void (*func)(const char *name, const char *buf, size_t
 	if (logger.buffer)
 		pr_info("exynos-snapshot: logger buffer alloc address: 0x%p\n", logger.buffer);
 }
-EXPORT_SYMBOL(register_hook_logger);
+EXPORT_SYMBOL(register_hook_pstore_log);
 
+#ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
 static int exynos_ss_combine_pmsg(char *buffer, size_t count, unsigned int level)
 {
 	char *logbuf = logger.buffer;
@@ -2396,7 +2637,7 @@ static int exynos_ss_combine_pmsg(char *buffer, size_t count, unsigned int level
 					tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec,
 					logger.tv_nsec / 1000000, logger.pid, logger.tid);
 
-			logger.func_hook_logger("log_platform", logbuf, logbuf_len);
+			logger.func_hook_logger("log_platform", logbuf, logbuf_len - 1);
 		}
 		break;
 	case ESS_LOGGER_LEVEL_PREFIX:
@@ -2422,17 +2663,20 @@ static int exynos_ss_combine_pmsg(char *buffer, size_t count, unsigned int level
 			if (count == ESS_LOGGER_SKIP_COUNT && *eatnl != '\0')
 				break;
 
-			memcpy((void *)logbuf, buffer, count);
-			eatnl = logbuf + count - ESS_LOGGER_STRING_PAD;
+			logger.func_hook_logger("log_platform", buffer, count - 1);
 
-			/* Mark End of String for safe to buffer */
-			*eatnl = '\0';
-			while (--eatnl >= logbuf) {
-				if (*eatnl == '\n' || *eatnl == '\0')
-					*eatnl = ' ';
-			};
+#ifdef CONFIG_SEC_EXT
+			if (count > 1 && strncmp(buffer, "!@", 2) == 0) {
+				buffer[count-1] = '\0';
+				pr_info("%s\n", buffer);
+#ifdef CONFIG_SEC_BOOTSTAT
+				if (count > 5 && strncmp(buffer, "!@Boot", 6) == 0){
+					sec_bootstat_add(buffer);
+				}
+#endif /* CONFIG_SEC_BOOTSTAT */
+			}
+#endif /* CONFIG_SEC_EXT */
 
-			logger.func_hook_logger("log_platform", logbuf, count);
 		}
 		break;
 	default:
@@ -2496,7 +2740,6 @@ EXPORT_SYMBOL(exynos_ss_hook_pmsg);
  *  ess_ramoops platform_device is used by pstore fs.
  */
 
-#ifdef CONFIG_EXYNOS_SNAPSHOT_PSTORE
 static struct ramoops_platform_data ess_ramoops_data = {
 	.record_size	= SZ_512K,
 	.console_size	= SZ_512K,
@@ -2514,8 +2757,13 @@ static struct platform_device ess_ramoops = {
 
 static int __init ess_pstore_init(void)
 {
-	ess_ramoops_data.mem_size = exynos_ss_get_item_size("log_pstore");
-	ess_ramoops_data.mem_address = exynos_ss_get_item_paddr("log_pstore");
+	if (dynsyslog_on == 0)
+		return 0;
+
+	if (exynos_ss_get_enable("log_pstore", true)) {
+		ess_ramoops_data.mem_size = exynos_ss_get_item_size("log_pstore");
+		ess_ramoops_data.mem_address = exynos_ss_get_item_paddr("log_pstore");
+	}
 	return platform_device_register(&ess_ramoops);
 }
 
@@ -2571,7 +2819,7 @@ static ssize_t ess_enable_store(struct kobject *kobj,
 	name = (char *)kstrndup(buf, count, GFP_KERNEL);
 	name[count - 1] = '\0';
 
-	en = exynos_ss_get_enable(name);
+	en = exynos_ss_get_enable(name, false);
 
 	if (en == -1)
 		pr_info("echo name > enabled\n");
@@ -2817,3 +3065,59 @@ static int __init exynos_ss_sysfs_init(void)
 	return ret;
 }
 late_initcall(exynos_ss_sysfs_init);
+
+#ifdef CONFIG_SEC_PM_DEBUG
+static ssize_t sec_log_read_all(struct file *file, char __user *buf,
+				size_t len, loff_t *offset)
+{
+	loff_t pos = *offset;
+	ssize_t count;
+	size_t size;
+	struct exynos_ss_item *item = &ess_items[ess_desc.log_kernel_num];
+
+	if (sec_log_full)
+		size = item->entry.size;
+	else
+		size = (size_t)(item->curr_ptr - item->head_ptr);
+
+	if (pos >= size)
+		return 0;
+
+	count = min(len, size);
+
+	if ((pos + count) > size)
+		count = size - pos;
+
+	if (copy_to_user(buf, item->head_ptr + pos, count))
+		return -EFAULT;
+
+	*offset += count;
+	return count;
+}
+
+static const struct file_operations sec_log_file_ops = {
+	.owner = THIS_MODULE,
+	.read = sec_log_read_all,
+};
+
+static int __init sec_log_late_init(void)
+{
+	struct proc_dir_entry *entry;
+	struct exynos_ss_item *item = &ess_items[ess_desc.log_kernel_num];
+
+	if (!item->head_ptr)
+		return 0;
+
+	entry = proc_create("sec_log", S_IRUSR | S_IRGRP, NULL, &sec_log_file_ops);
+	if (!entry) {
+		pr_err("%s: failed to create proc entry\n", __func__);
+		return 0;
+	}
+
+	proc_set_size(entry, item->entry.size);
+
+	return 0;
+}
+
+late_initcall(sec_log_late_init);
+#endif

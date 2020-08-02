@@ -23,6 +23,7 @@
 #include "fwhdr.h"
 #include "mxlog.h"
 #include "fw_panic_record.h"
+#include "panicmon.h"
 #include "mxproc.h"
 #include "mxlog_transport.h"
 #include <scsc/kic/slsi_kic_lib.h>
@@ -117,7 +118,7 @@ static bool disable_error_handling;
 module_param(disable_error_handling, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(disable_error_handling, "Disable error handling");
 
-static bool disable_recovery_handling = 1;
+static bool disable_recovery_handling = 0;
 module_param(disable_recovery_handling, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(disable_recovery_handling, "Disable recovery handling");
 
@@ -220,6 +221,37 @@ static int send_mm_msg_stop_blocking(struct mxman *mxman)
 	return 0;
 }
 
+static void write_m_test_fw_version_file(struct mxman *mxman)
+{
+	struct file *fp = NULL;
+	char *filepath = "/data/misc/conn/.wifiver.info";
+	char buf[80];
+	char *build_id = 0;
+
+	if (mxman)
+		build_id = mxman->fw_build_id;
+
+	fp = filp_open(filepath, O_WRONLY|O_CREAT, 0644);
+
+	if (IS_ERR(fp)) {
+		pr_err("returned error %d\n", IS_ERR(fp));
+		return;
+	} else if (fp == NULL) {
+		pr_err("%s doesn't exist.\n", filepath);
+		return;
+	}
+	snprintf(buf, sizeof(buf), "drv_ver: %d.%d.%d N (f/w: %s)\n",
+		 SCSC_RELEASE_PRODUCT, SCSC_RELEASE_ITERATION, SCSC_RELEASE_CANDIDATE,
+		 build_id ? build_id : "unknown");
+
+	kernel_write(fp, buf, strlen(buf), 0);
+
+	if (fp)
+		filp_close(fp, NULL);
+
+	SCSC_TAG_INFO(MXMAN, "Succeed to write firmware/host information to .wifiver.info\n");
+}
+
 static void mxman_print_versions(struct mxman *mxman)
 {
 #define SCSC_RF_HW_S610 0xb0
@@ -230,6 +262,10 @@ static void mxman_print_versions(struct mxman *mxman)
 		((mxman->rf_hw_ver >> 12) & 0xfU), ((mxman->rf_hw_ver >> 8) & 0xfU));
 
 	SCSC_TAG_INFO(MXMAN, "WLBT FW: %s\n", mxman->fw_build_id);
+
+	/* write /data/.wifiver.info */
+	write_m_test_fw_version_file(mxman);
+
 }
 
 /** Receive handler for messages from the FW along the maxwell management transport */
@@ -552,35 +588,6 @@ static int fwhdr_init(char *fw, struct fwhdr *fwhdr, bool *fwhdr_parsed_ok, bool
 	return 0;
 }
 
-static void write_m_test_fw_version_file(struct mxman *mxman)
-{
-	struct file *fp = NULL;
-	char *filepath = "/data/.wifiver.info";
-	char buf[80];
-	char *build_id = 0;
-
-	if (mxman)
-		build_id = mxman->fw_build_id;
-
-	fp = filp_open(filepath, O_WRONLY|O_CREAT, 0644);
-
-	if (IS_ERR(fp)) {
-		pr_err("returned error %d\n", IS_ERR(fp));
-		return;
-	} else if (fp == NULL) {
-		pr_err("%s doesn't exist.\n", filepath);
-		return;
-	}
-	snprintf(buf, sizeof(buf), "drv_ver: %d.%d.%d (f/w: %s)\n",
-		 SCSC_RELEASE_PRODUCT, SCSC_RELEASE_ITERATION, SCSC_RELEASE_CANDIDATE,
-		 build_id ? build_id : "unknown");
-
-	kernel_write(fp, buf, strlen(buf), 0);
-
-	if (fp)
-		filp_close(fp, NULL);
-}
-
 static int fw_init(struct mxman *mxman, void *start_dram, size_t size_dram, bool *fwhdr_parsed_ok)
 {
 	int                 r;
@@ -635,9 +642,6 @@ static int fw_init(struct mxman *mxman, void *start_dram, size_t size_dram, bool
 	}
 
 	SCSC_TAG_DEBUG(MXMAN, "firmware_entry_point=0x%x fw_runtime_length=%d\n", fwhdr->firmware_entry_point, fwhdr->fw_runtime_length);
-
-	/* write /data/.wifiver.info */
-	write_m_test_fw_version_file(mxman);
 
 	return 0;
 
@@ -743,6 +747,7 @@ static int mxman_start(struct mxman *mxman)
 	}
 #endif
 	mxproc_create_ctrl_proc_dir(&mxman->mxproc, mxman);
+	panicmon_init(scsc_mx_get_panicmon(mxman->mx), mxman->mx);
 	/* release Maxwell from reset */
 	mif->reset(mif, 0);
 	if (fwhdr_parsed_ok) {
@@ -765,7 +770,7 @@ static int mxman_start(struct mxman *mxman)
 
 static bool is_bug_on_enabled(struct scsc_mx *mx)
 {
-#define MX140_MEMDUMP_INFO_FILE          "/data/.memdump.info"
+#define MX140_MEMDUMP_INFO_FILE          "/data/misc/conn/.memdump.info"
 	const struct firmware *firm;
 	int r;
 	bool bug_on_enabled = false;
@@ -975,9 +980,10 @@ static void mxman_failure_work(struct work_struct *work)
 	mif->irq_bit_set(mif, MIFINTRBIT_RESERVED_PANIC_M4, SCSC_MIFINTR_TARGET_M4);
 	srvman_freeze_services(srvman);
 	if (mxman->mxman_state == MXMAN_STATE_FAILED) {
+		mxman->last_panic_time = local_clock();
 		process_panic_record(mxman);
 		SCSC_TAG_INFO(MXMAN, "Trying to schedule coredump\n");
-		SCSC_TAG_INFO(MXMAN, "scsc_release %d.%d.%d\n",
+		SCSC_TAG_INFO(MXMAN, "scsc_release %d.%d.%d N\n",
 			SCSC_RELEASE_PRODUCT,
 			SCSC_RELEASE_ITERATION,
 			SCSC_RELEASE_CANDIDATE);
@@ -1020,8 +1026,8 @@ static void mxman_failure_work(struct work_struct *work)
 
 		if (is_bug_on_enabled(mx)) {
 			SCSC_TAG_INFO(MX_FILE, "Deliberately panic the kernel due to WLBT firmware failure!\n");
-			SCSC_TAG_INFO(MX_FILE, "calling BUG_ON(1)\n");
-			BUG_ON(1);
+			SCSC_TAG_INFO(MX_FILE, "calling WARN_ON(1)\n");
+			WARN_ON(1);
 		}
 		/* Clean up the MIF following error handling */
 		if (mif->mif_cleanup && disable_recovery_handling)
@@ -1120,6 +1126,8 @@ static int __mxman_open(struct mxman *mxman)
 	mx140_basedir_file(mxman->mx);
 
 	mutex_lock(&mxman->mxman_mutex);
+	SCSC_TAG_INFO(MXMAN, "Previously recorded crash panic code: scsc_panic_code=0x%x\n", mxman->scsc_panic_code);
+	print_panic_code(mxman->scsc_panic_code);
 
 	srvman = scsc_mx_get_srvman(mxman->mx);
 	if (srvman && srvman->error) {
@@ -1212,6 +1220,7 @@ static void mxman_stop(struct mxman *mxman)
 	/* Shutdown the hardware */
 	mif = scsc_mx_get_mif_abs(mxman->mx);
 	mif->reset(mif, 1);
+	panicmon_deinit(scsc_mx_get_panicmon(mxman->mx));
 	transports_release(mxman);
 
 	mxlog_release(scsc_mx_get_mxlog(mxman->mx));
@@ -1459,7 +1468,7 @@ static int _mx_exec(char *prog, int wait_exec)
 
 	/* Kernel library function argv_split() will allocate memory for argv. */
 	argc = 0;
-	argv = argv_split(GFP_ATOMIC, argv_str, &argc);
+	argv = argv_split(GFP_KERNEL, argv_str, &argc);
 	if (!argv) {
 		pr_err("%s: failed to allocate argv for userspace helper\n", __func__);
 		return -ENOMEM;

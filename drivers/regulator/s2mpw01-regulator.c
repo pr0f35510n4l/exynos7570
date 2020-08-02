@@ -51,6 +51,7 @@ struct s2mpw01_info {
 	bool cache_data;
 };
 
+#ifdef CONFIG_EXYNOS_SNAPSHOT_REGULATOR
 static char *rdev_name(struct regulator_dev *rdev)
 {
 	if (rdev->desc->name)
@@ -60,6 +61,7 @@ static char *rdev_name(struct regulator_dev *rdev)
 	else
 		return "";
 }
+#endif
 
 /* Some LDOs supports [LPM/Normal]ON mode during suspend state */
 static int s2m_set_mode(struct regulator_dev *rdev,
@@ -97,40 +99,84 @@ static int s2m_set_mode(struct regulator_dev *rdev,
 static int s2m_enable(struct regulator_dev *rdev)
 {
 	struct s2mpw01_info *s2mpw01 = rdev_get_drvdata(rdev);
+	int id = rdev_get_id(rdev);
+	u8 reg = S2MPW01_PMIC_REG_EXT_CTRL, val, mask;
 
-	return s2mpw01_update_reg(s2mpw01->i2c, rdev->desc->enable_reg,
-				  s2mpw01->opmode[rdev_get_id(rdev)],
-				  rdev->desc->enable_mask);
+	switch (id) {
+	case S2MPW01_LDO19:
+		val = mask = 1;
+		break;
+	case S2MPW01_LDO8:
+		val = mask = 2;
+		break;
+	case S2MPW01_LDO9:
+		val = mask = 4;
+		break;
+	default:
+		reg = rdev->desc->enable_reg;
+		val = s2mpw01->opmode[id];
+		mask = rdev->desc->enable_mask;
+		break;
+	}
+
+	return s2mpw01_update_reg(s2mpw01->i2c, reg, val, mask);
 }
 
 static int s2m_disable_regmap(struct regulator_dev *rdev)
 {
 	struct s2mpw01_info *s2mpw01 = rdev_get_drvdata(rdev);
-	u8 val;
+	int id = rdev_get_id(rdev);
+	u8 reg = S2MPW01_PMIC_REG_EXT_CTRL, val = 0, mask;
 
-	if (rdev->desc->enable_is_inverted)
-		val = rdev->desc->enable_mask;
-	else
-		val = 0;
+	switch (id) {
+	case S2MPW01_LDO19:
+		mask = 1;
+		break;
+	case S2MPW01_LDO8:
+		mask = 2;
+		break;
+	case S2MPW01_LDO9:
+		mask = 4;
+		break;
+	default:
+		reg = rdev->desc->enable_reg;
+		val = rdev->desc->enable_is_inverted ?
+			rdev->desc->enable_mask : 0;
+		mask = rdev->desc->enable_mask;
+		break;
+	}
 
-	return s2mpw01_update_reg(s2mpw01->i2c, rdev->desc->enable_reg,
-				  val, rdev->desc->enable_mask);
+	return s2mpw01_update_reg(s2mpw01->i2c, reg, val, mask);
 }
 
 static int s2m_is_enabled_regmap(struct regulator_dev *rdev)
 {
 	struct s2mpw01_info *s2mpw01 = rdev_get_drvdata(rdev);
-	int ret;
-	u8 val;
+	int ret, id = rdev_get_id(rdev);
+	u8 reg = S2MPW01_PMIC_REG_EXT_CTRL, val, mask;
 
-	ret = s2mpw01_read_reg(s2mpw01->i2c, rdev->desc->enable_reg, &val);
+	switch (id) {
+	case S2MPW01_LDO19:
+		mask = 1;
+		break;
+	case S2MPW01_LDO8:
+		mask = 2;
+		break;
+	case S2MPW01_LDO9:
+		mask = 4;
+		break;
+	default:
+		reg = rdev->desc->enable_reg;
+		mask = rdev->desc->enable_mask;
+		break;
+	}
+
+	ret = s2mpw01_read_reg(s2mpw01->i2c, reg, &val);
 	if (ret)
 		return ret;
 
-	if (rdev->desc->enable_is_inverted)
-		return (val & rdev->desc->enable_mask) == 0;
-	else
-		return (val & rdev->desc->enable_mask) != 0;
+	return rdev->desc->enable_is_inverted ?
+		!(val & mask) : !!(val & mask);
 }
 
 static int get_ramp_delay(int ramp_delay)

@@ -21,7 +21,6 @@
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
 #include <linux/regmap.h>
-#include <linux/pm_runtime.h>
 
 #include <linux/mfd/wm8994/core.h>
 #include <linux/mfd/wm8994/pdata.h>
@@ -158,28 +157,10 @@ static struct irq_chip wm8994_edge_irq_chip = {
 static irqreturn_t wm8994_edge_irq(int irq, void *data)
 {
 	struct wm8994 *wm8994 = data;
-	unsigned int nest_irq;
-	int ret;
-	//pr_err("%s: occur\n", __func__);
 
-	ret = pm_runtime_get_sync(wm8994->dev);
-	if (ret < 0) {
-		dev_err(wm8994->dev, "Failed to resume device: %d\n", ret);
-		return IRQ_NONE;
-	}
+	while (gpio_get_value_cansleep(wm8994->pdata.irq_gpio))
+		handle_nested_irq(irq_create_mapping(wm8994->edge_irq, 0));
 
-	//pr_err("%s: 0x730: %#x, 0x731:%#x\n", __func__,
-	//	wm8994_reg_read(wm8994, WM8994_INTERRUPT_STATUS_1),
-	//	wm8994_reg_read(wm8994, WM8994_INTERRUPT_STATUS_2));
-	
-	if (wm8994->irq_data) {
-		nest_irq = irq_find_mapping(wm8994->edge_irq, 0);
-		//dev_err(wm8994->dev, "nest_irq=%d\n", nest_irq);
-		handle_nested_irq(nest_irq);
-	}
-
-	pm_runtime_mark_last_busy(wm8994->dev);
-	pm_runtime_put_autosuspend(wm8994->dev);
 	return IRQ_HANDLED;
 }
 
@@ -214,9 +195,6 @@ int wm8994_irq_init(struct wm8994 *wm8994)
 	unsigned long irqflags;
 	struct wm8994_pdata *pdata = dev_get_platdata(wm8994->dev);
 
-	pdata = &wm8994->pdata;
-	//pdata->irq_gpio = 21;//GPA1-3
-	pdata->irq_flags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT;
 	if (!wm8994->irq) {
 		dev_warn(wm8994->dev,
 			 "No interrupt specified, no interrupts\n");
@@ -230,34 +208,26 @@ int wm8994_irq_init(struct wm8994 *wm8994)
 		irqflags = pdata->irq_flags;
 
 	/* use a GPIO for edge triggered controllers */
-	if (irqflags & (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT)) {
-		dev_err(wm8994->dev, "irqflags is edge triggered\n");
-		if (pdata->irq_gpio) {
-			dev_err(wm8994->dev, "irq_gpio =%d\n", pdata->irq_gpio);
-			if (gpio_to_irq(pdata->irq_gpio) != wm8994->irq) {
-				dev_err(wm8994->dev, "IRQ %d is not GPIO %d (%d)\n",
-					 wm8994->irq, pdata->irq_gpio,
-					 gpio_to_irq(pdata->irq_gpio));
-				wm8994->irq = gpio_to_irq(pdata->irq_gpio);
-
-			}
-
-			ret = devm_gpio_request_one(wm8994->dev, pdata->irq_gpio,
-						    GPIOF_IN, "WM8994 IRQ");
-			if (ret != 0) {
-				dev_err(wm8994->dev, "Failed to get IRQ GPIO: %d\n",
-					ret);
-				return ret;
-			}
+	if (irqflags & (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING)) {
+		if (gpio_to_irq(pdata->irq_gpio) != wm8994->irq) {
+			dev_warn(wm8994->dev, "IRQ %d is not GPIO %d (%d)\n",
+				 wm8994->irq, pdata->irq_gpio,
+				 gpio_to_irq(pdata->irq_gpio));
+			wm8994->irq = gpio_to_irq(pdata->irq_gpio);
 		}
-		/*allocate a virtual IRQ domain*/
+
+		ret = devm_gpio_request_one(wm8994->dev, pdata->irq_gpio,
+					    GPIOF_IN, "WM8994 IRQ");
+
+		if (ret != 0) {
+			dev_err(wm8994->dev, "Failed to get IRQ GPIO: %d\n",
+				ret);
+			return ret;
+		}
+
 		wm8994->edge_irq = irq_domain_add_linear(NULL, 1,
 							 &wm8994_edge_irq_ops,
 							 wm8994);
-		if (!wm8994->edge_irq) {
-			dev_err(wm8994->dev, "Failed to add core IRQ domain\n");
-			return -EINVAL;
-		}
 
 		ret = regmap_add_irq_chip(wm8994->regmap,
 					  irq_create_mapping(wm8994->edge_irq,
@@ -266,7 +236,7 @@ int wm8994_irq_init(struct wm8994 *wm8994)
 					  wm8994->irq_base, &wm8994_irq_chip,
 					  &wm8994->irq_data);
 		if (ret != 0) {
-			dev_err(wm8994->dev, "Failed to add IRQ: %d\n",
+			dev_err(wm8994->dev, "Failed to get IRQ: %d\n",
 				ret);
 			return ret;
 		}

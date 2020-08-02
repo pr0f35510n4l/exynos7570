@@ -123,6 +123,18 @@ struct fimc_is_flash_data {
 	struct work_struct		flash_fire_work;
 	struct timer_list		flash_expire_timer;
 	struct work_struct		flash_expire_work;
+#ifdef CONFIG_VENDER_MCD
+	u32				flash_current;
+	u32				movie_current;
+	u32				torch_current;
+	u32				factory_current;
+	
+	u32				torch_level1;
+	u32				torch_level2;
+	u32				torch_level3;
+	u32				torch_level4;
+	u32				torch_level5;
+#endif
 };
 
 struct fimc_is_flash {

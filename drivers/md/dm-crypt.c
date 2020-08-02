@@ -27,6 +27,7 @@
 #include <crypto/hash.h>
 #include <crypto/md5.h>
 #include <crypto/algapi.h>
+#include <crypto/fmp.h>
 
 #include <linux/device-mapper.h>
 
@@ -39,9 +40,7 @@ volatile unsigned int disk_key_flag;
 DEFINE_SPINLOCK(disk_key_lock);
 
 #if defined(CONFIG_FIPS_FMP)
-#if defined(CONFIG_MMC_DW_FMP_DM_CRYPT) || defined(CONFIG_UFS_FMP_DM_CRYPT)
 extern int fmp_clear_disk_key(void);
-#endif
 #endif
 
 /*
@@ -1151,9 +1150,10 @@ static int kcryptd_io_rw(struct dm_crypt_io *io, gfp_t gfp)
 	crypt_inc_pending(io);
 
 	clone_init(io, clone);
-#if defined(CONFIG_MMC_DW_FMP_DM_CRYPT) || defined(CONFIG_UFS_FMP_DM_CRYPT)
-	clone->bi_sensitive_data = 1;
-#endif
+	clone->private_enc_mode = FMP_DISK_ENC_MODE;
+	clone->private_algo_mode = FMP_XTS_ALGO_MODE;
+	clone->key = cc->key;
+	clone->key_length = cc->key_size;
 	clone->bi_iter.bi_sector = cc->start + io->sector;
 
 	generic_make_request(clone);
@@ -1483,6 +1483,7 @@ static int crypt_setkey_allcpus(struct crypt_config *cc)
 {
 	unsigned subkey_size;
 	int err = 0, i, r;
+	unsigned long flags;
 
 	/* Ignore extra keys (which are used for IV etc) */
 	subkey_size = (cc->key_size - cc->key_extra_size) >> ilog2(cc->tfms_count);
@@ -1510,9 +1511,9 @@ static int crypt_setkey_allcpus(struct crypt_config *cc)
 			return -ENOSYS;
 		}
 
-		spin_lock(&disk_key_lock);
+		spin_lock_irqsave(&disk_key_lock, flags);
 		disk_key_flag = 1;
-		spin_unlock(&disk_key_lock);
+		spin_unlock_irqrestore(&disk_key_lock, flags);
 
 		iounmap((void *)key_storage);
 	} else {
@@ -1610,9 +1611,11 @@ static void crypt_dtr(struct dm_target *ti)
 	kzfree(cc);
 
 #if defined(CONFIG_FIPS_FMP)
-	r = fmp_clear_disk_key();
-	if (r)
-		pr_err("dm-crypt: Fail to clear FMP disk key. r = 0x%x\n", r);
+	if (cc->hw_fmp) {
+		r = fmp_clear_disk_key();
+		if (r)
+			pr_err("dm-crypt: Fail to clear FMP disk key. r = 0x%x\n", r);
+	}
 #endif
 }
 
@@ -1693,11 +1696,6 @@ static int crypt_ctr_cipher(struct dm_target *ti,
 		(strcmp(cipher, "aes") == 0) &&
 		(strcmp(ivmode, "fmp") == 0)) {
 		pr_info("%s: H/W FMP disk encryption\n", __func__);
-#if !defined(CONFIG_MMC_DW_FMP_DM_CRYPT) && !defined(CONFIG_UFS_FMP_DM_CRYPT)
-		ti->error = "Error decoding xts-aes-fmp";
-		ret = -EINVAL;
-		goto bad;
-#endif
 		cc->hw_fmp = 1;
 
 		/* Initialize and set key */
@@ -1993,10 +1991,7 @@ static int crypt_map(struct dm_target *ti, struct bio *bio)
 	io->ctx.req = (struct ablkcipher_request *)(io + 1);
 
 	if (cc->hw_fmp == 1) {
-		if (bio_data_dir(io->base_bio) == READ) {
-			if (kcryptd_io_rw(io, GFP_NOWAIT))
-				kcryptd_queue_io(io);
-		} else
+		if (kcryptd_io_rw(io, GFP_NOWAIT))
 			kcryptd_queue_io(io);
 	} else {
 		if (bio_data_dir(io->base_bio) == READ) {

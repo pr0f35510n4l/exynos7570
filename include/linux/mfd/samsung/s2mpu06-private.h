@@ -91,6 +91,7 @@
 #define S2MPU06_PMIC_REG_LDO_DSCH1	0x38
 #define S2MPU06_PMIC_REG_LDO_DSCH2	0x39
 #define S2MPU06_PMIC_REG_LDO_DSCH3	0x3A
+#define S2MPU06_PMIC_REG_EXT_CTRL	0xFF
 
 /* Charger INT register */
 #define S2MPU06_CHG_REG_INT1                0x00
@@ -293,6 +294,7 @@ extern void s2mpu06_irq_exit(struct s2mpu06_dev *s2mpu06);
 extern int s2mpu06_read_codec_reg(struct i2c_client *i2c, u8 reg, u8 *dest);
 /* S2MPU06 shared i2c API function */
 extern int s2mpu06_read_reg(struct i2c_client *i2c, u8 reg, u8 *dest);
+extern int s2mpu06_read_reg_non_mutex(struct i2c_client *i2c, u8 reg, u8 *dest);
 extern int s2mpu06_bulk_read(struct i2c_client *i2c, u8 reg, int count,
 				u8 *buf);
 extern int s2mpu06_write_reg(struct i2c_client *i2c, u8 reg, u8 value);
@@ -303,5 +305,8 @@ extern int s2mpu06_read_word(struct i2c_client *i2c, u8 reg);
 
 extern int s2mpu06_update_reg(struct i2c_client *i2c, u8 reg, u8 val, u8 mask);
 
+extern bool s2mpu06_is_pwron(void);
+
+extern void set_codec_notifier_flag(void);
 #endif /* __LINUX_MFD_S2MPU06_PRIV_H */
 

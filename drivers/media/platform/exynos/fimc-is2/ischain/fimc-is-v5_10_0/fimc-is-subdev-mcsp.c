@@ -137,34 +137,32 @@ static int fimc_is_ischain_mxp_adjust_crop(struct fimc_is_device_ischain *device
 	u32 *output_crop_w, u32 *output_crop_h)
 {
 	int changed = 0;
-	u32 down_ratio;
 
-	if (*output_crop_w > input_crop_w * MCSC_POLY_RATIO_UP) {
-		mwarn("Cannot be scaled up beyond %d times(%d -> %d)",
-			device, MCSC_POLY_RATIO_UP, input_crop_w, *output_crop_w);
-		*output_crop_w = input_crop_w * MCSC_POLY_RATIO_UP;
+	if (*output_crop_w > input_crop_w * 8) {
+		mwarn("Cannot be scaled up beyond 8 times(%d -> %d)",
+			device, input_crop_w, *output_crop_w);
+		*output_crop_w = input_crop_w * 8;
 		changed |= 0x01;
 	}
 
-	if (*output_crop_h > input_crop_h * MCSC_POLY_RATIO_UP) {
-		mwarn("Cannot be scaled up beyond %d times(%d -> %d)",
-			device, MCSC_POLY_RATIO_UP, input_crop_h, *output_crop_h);
-		*output_crop_h = input_crop_h * MCSC_POLY_RATIO_UP;
+	if (*output_crop_h > input_crop_h * 8) {
+		mwarn("Cannot be scaled up beyond 8 times(%d -> %d)",
+			device, input_crop_h, *output_crop_h);
+		*output_crop_h = input_crop_h * 8;
 		changed |= 0x02;
 	}
 
-	down_ratio = MCSC_POLY_RATIO_DOWN * MCSC_POST_RATIO_DOWN;
-	if (*output_crop_w < (input_crop_w + (down_ratio - 1)) / down_ratio) {
-		mwarn("Cannot be scaled down beyond 1/%d times(%d -> %d)",
-			device, down_ratio, input_crop_w, *output_crop_w);
-		*output_crop_w = (input_crop_w + (down_ratio - 1)) / down_ratio;
+	if (*output_crop_w < (input_crop_w + 23) / 24) {
+		mwarn("Cannot be scaled down beyond 1/16 times(%d -> %d)",
+			device, input_crop_w, *output_crop_w);
+		*output_crop_w = (input_crop_w + 23) / 24;
 		changed |= 0x10;
 	}
 
-	if (*output_crop_h < (input_crop_h + (down_ratio - 1)) / down_ratio) {
-		mwarn("Cannot be scaled down beyond 1/%d times(%d -> %d)",
-			device, down_ratio, input_crop_h, *output_crop_h);
-		*output_crop_h = (input_crop_h + (down_ratio - 1)) / down_ratio;
+	if (*output_crop_h < (input_crop_h + 23) / 24) {
+		mwarn("Cannot be scaled down beyond 1/16 times(%d -> %d)",
+			device, input_crop_h, *output_crop_h);
+		*output_crop_h = (input_crop_h + 23) / 24;
 		changed |= 0x20;
 	}
 
@@ -331,7 +329,7 @@ static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
 	struct camera2_node *node)
 {
 	int ret = 0;
-	struct fimc_is_group *head;
+	struct fimc_is_group *group;
 	struct fimc_is_subdev *leader;
 	struct fimc_is_queue *queue;
 	struct mcs_param *mcs_param;
@@ -465,18 +463,21 @@ static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
 			 * For supporting multi input to single output.
 			 * But this function is not supported in full OTF chain.
 			 */
-			if (device->group_mcs.head)
-				head = device->group_mcs.head;
-			else
-				head = &device->group_mcs;
-
-			if (!test_bit(FIMC_IS_GROUP_OTF_INPUT, &head->state) && (head->asyn_shots == 1)) {
+			group = &device->group_mcs;
+			if (!test_bit(FIMC_IS_GROUP_OTF_INPUT, &group->state) && (group->asyn_shots == 1)) {
 				ret = down_interruptible(&subdev->vctx->video->smp_multi_input);
 				if (ret)
 					mswarn(" smp_multi_input down fail(%d)", device, subdev, ret);
 				else
 					subdev->vctx->video->try_smp = true;
-
+			} else {
+				if (!test_bit(FIMC_IS_GROUP_OTF_INPUT, &group->parent->state) && (group->asyn_shots == 1)) {
+					ret = down_interruptible(&subdev->vctx->video->smp_multi_input);
+					if (ret)
+						mswarn(" smp_multi_input down fail(%d)", device, subdev, ret);
+					else
+						subdev->vctx->video->try_smp = true;
+				}
 			}
 		}
 	} else {

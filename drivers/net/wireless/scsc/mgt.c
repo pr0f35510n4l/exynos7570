@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  *****************************************************************************/
 
@@ -52,22 +52,45 @@ static int slsi_country_to_index(struct slsi_802_11d_reg_domain *domain_info, co
 static int slsi_mib_initial_get(struct slsi_dev *sdev);
 static int slsi_hanged_event_count;
 
-void slsi_purge_scan_results(struct sk_buff_head *scan_result)
+void slsi_purge_scan_results(struct slsi_scan *scan)
 {
-	int i;
+	struct slsi_scan_result *scan_result = scan->scan_results;
+	struct slsi_scan_result *prev = NULL;
 
-	for (i = 0; i < SLSI_SCAN_RESULT_HEAD_MAX; i++)
-		slsi_skb_queue_purge(&scan_result[i]);
+	while (scan_result) {
+		slsi_kfree_skb(scan_result->beacon);
+		slsi_kfree_skb(scan_result->probe_resp);
+		prev = scan_result;
+		scan_result = scan_result->next;
+		kfree(prev);
+	}
+	scan->scan_results = NULL;
 }
 
-struct sk_buff *slsi_dequeue_cached_scan_result(struct sk_buff_head *scan_result)
+struct sk_buff *slsi_dequeue_cached_scan_result(struct slsi_scan *scan, int *count)
 {
-	struct sk_buff *skb;
+	struct sk_buff *skb = NULL;
+	struct slsi_scan_result *scan_result = scan->scan_results;
 
-	skb = slsi_skb_dequeue(&scan_result[SLSI_SCAN_RESULT_HIDDEN_SSID]);
-	if (!skb)
-		skb = slsi_skb_dequeue(&scan_result[SLSI_SCAN_RESULT_WITH_SSID]);
+	if (scan_result) {
+		if (scan_result->beacon) {
+			skb = scan_result->beacon;
+			scan_result->beacon = NULL;
+		} else if (scan_result->probe_resp) {
+			skb = scan_result->probe_resp;
+			scan_result->probe_resp = NULL;
+		} else {
+			SLSI_ERR_NODEV("Scan entry with no beacon /probe resp!!\n");
+		}
 
+		/*If beacon and probe response indicated above , remove the entry*/
+		if (!scan_result->beacon  && !scan_result->probe_resp) {
+			scan->scan_results = scan_result->next;
+			kfree(scan_result);
+			if (count)
+				(*count)++;
+		}
+	}
 	return skb;
 }
 
@@ -145,6 +168,31 @@ mac_default:
 #endif
 }
 
+static void slsi_print_platform_id(struct slsi_dev *sdev)
+{
+	const struct firmware *e = NULL;
+	char                  path_name[MX_WLAN_FILE_PATH_LEN_MAX];
+	int                   r;
+
+	/* read platform id file */
+	scnprintf(path_name, MX_WLAN_FILE_PATH_LEN_MAX, "wlan/platform.txt");
+	SLSI_DBG1(sdev, SLSI_INIT_DEINIT, "Platform ID file : %s\n", path_name);
+
+	r = mx140_file_request_conf(sdev->maxwell_core, &e, path_name);
+	if (r != 0) {
+		SLSI_WARN(sdev, "Platform ID file NOT found\n");
+		mx140_file_release_conf(sdev->maxwell_core, e);
+		return;
+	}
+	if (!e) {
+		SLSI_WARN(sdev, "mx140_file_request_device_conf() returned success, but the struct firmware handle was null\n");
+		mx140_file_release_conf(sdev->maxwell_core, e);
+		return;
+	}
+	SLSI_INFO(sdev, "Platform ID loaded from %s: %s\n", path_name, (char *)e->data);
+	mx140_file_release_conf(sdev->maxwell_core, e);
+}
+
 #ifdef CONFIG_SCSC_DEBUG_CODE_COMMENTED_OUT
 static struct slsi_hip_card_params *slsi_get_hip_card_param(struct slsi_dev *sdev)
 {
@@ -198,13 +246,13 @@ int slsi_start(struct slsi_dev *sdev)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
 		reinit_completion(&sdev->recovery_completed);
 #else
-		/*This is how the macro is used in the older verion.*/
+		/*This is how the macro is used in the older version.*/
 		INIT_COMPLETION(sdev->recovery_completed);
 #endif
 	}
 
 	sdev->device_state = SLSI_DEVICE_STATE_STARTING;
-
+	slsi_print_platform_id(sdev);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
 	reinit_completion(&sdev->sig_wait.completion);
 #else
@@ -213,6 +261,7 @@ int slsi_start(struct slsi_dev *sdev)
 
 	SLSI_DBG2(sdev, SLSI_INIT_DEINIT, "Step [1/2]: Start WLAN service\n");
 	SLSI_EC_GOTO(slsi_sm_wlan_service_open(sdev), err, err_done);
+	slsi_print_platform_id(sdev);
 	/**
 	 * Download MIB data, if any.
 	 */
@@ -252,6 +301,8 @@ int slsi_start(struct slsi_dev *sdev)
 #endif
 	/**
 	 * Download MIB data, if any.
+	 * Get f/w capabilities and default configuration
+	 * configure firmware
 	 */
 	SLSI_DBG2(sdev, SLSI_INIT_DEINIT, "Step [3/3]: Get MIB configuration\n");
 	SLSI_EC_GOTO(slsi_mib_initial_get(sdev), err, err_hip_started);
@@ -428,25 +479,6 @@ void slsi_vif_cleanup(struct slsi_dev *sdev, struct net_device *dev, bool hw_ava
 				SLSI_DBG2(sdev, SLSI_INIT_DEINIT, "P2P active - Deactivate\n");
 				slsi_p2p_vif_deactivate(sdev, dev, hw_available);
 			}
-		} else if (ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) {
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-			SLSI_DBG2(sdev, SLSI_INIT_DEINIT, "ADHOC active\n");
-			if (hw_available) {
-				struct slsi_peer *peer;
-				int              j;
-
-				for (j = 0; j < SLSI_ADHOC_PEER_CONNECTIONS_MAX; j++) {
-					peer = ndev_vif->peer_sta_record[j];
-					if (peer && peer->valid)
-						slsi_ps_port_control(sdev, dev, peer, SLSI_STA_CONN_STATE_DISCONNECTED);
-				}
-				slsi_mlme_del_vif(sdev, dev);
-			}
-
-			slsi_vif_deactivated(sdev, dev);
-#else
-			SLSI_NET_WARN(dev, "Operation not supported for ADHOC yet\n");
-#endif
 		}
 	}
 }
@@ -460,7 +492,7 @@ void slsi_scan_cleanup(struct slsi_dev *sdev, struct net_device *dev)
 
 	SLSI_MUTEX_LOCK(ndev_vif->scan_mutex);
 	for (i = 0; i < SLSI_SCAN_MAX; i++) {
-		slsi_purge_scan_results(ndev_vif->scan[i].scan_results);
+		slsi_purge_scan_results(&ndev_vif->scan[i]);
 		if (ndev_vif->scan[i].scan_req && i == SLSI_SCAN_HW_ID)
 			cfg80211_scan_done(ndev_vif->scan[i].scan_req, false);
 
@@ -1073,10 +1105,6 @@ struct slsi_peer *slsi_peer_add(struct slsi_dev *sdev, struct net_device *dev, u
 	peer->assoc_resp_ie = NULL;
 	peer->is_wps = false;
 	peer->connected_state = SLSI_STA_CONN_STATE_DISCONNECTED;
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	peer->ba_tx_state = SLSI_AMPDU_F_OPERATIONAL;
-	peer->ba_tx_userpri = 0;
-#endif  /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
 	/* Initialise the Station info */
 	slsi_peer_reset_stats(sdev, dev, peer);
 	ratelimit_state_init(&peer->sinfo_mib_get_rs, SLSI_SINFO_MIB_ACCESS_TIMEOUT, 0);
@@ -1189,11 +1217,7 @@ int slsi_test_send_hanged_vendor_event(struct net_device *dev)
 }
 #endif
 
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-bool slsi_search_ies_for_qos_indicators(struct slsi_dev *sdev, u8 *ies, int ies_len)
-#else
 static bool slsi_search_ies_for_qos_indicators(struct slsi_dev *sdev, u8 *ies, int ies_len)
-#endif
 {
 	SLSI_UNUSED_PARAMETER_NOT_DEBUG(sdev);
 
@@ -1404,6 +1428,8 @@ int slsi_vif_activated(struct slsi_dev *sdev, struct net_device *dev)
 		ndev_vif->sta.tdls_peer_sta_records = 0;
 		ndev_vif->sta.tdls_enabled = false;
 		ndev_vif->sta.roam_in_progress = false;
+
+		memset(ndev_vif->sta.keepalive_host_tag, 0, sizeof(ndev_vif->sta.keepalive_host_tag));
 	}
 
 	ndev_vif->cfg80211_sinfo_generation = 0;
@@ -1428,6 +1454,7 @@ void slsi_vif_deactivated(struct slsi_dev *sdev, struct net_device *dev)
 	if (ndev_vif->vif_type == FAPI_VIFTYPE_STATION) {
 		ndev_vif->sta.group_key_set = false;
 		ndev_vif->sta.vif_status = SLSI_VIF_STATUS_UNSPECIFIED;
+		memset(ndev_vif->sta.keepalive_host_tag, 0, sizeof(ndev_vif->sta.keepalive_host_tag));
 	}
 
 	/* MUST be done first to ensure that other code doesn't treat the VIF as still active */
@@ -1436,7 +1463,7 @@ void slsi_vif_deactivated(struct slsi_dev *sdev, struct net_device *dev)
 	/* delete the TSPEC entries (if any) if it is a STA vif */
 	if (ndev_vif->vif_type == FAPI_VIFTYPE_STATION &&
 	    ndev_vif->iftype == NL80211_IFTYPE_STATION)
-		cac_deactivate_tspecs(sdev);
+		cac_delete_tspec_list(sdev);
 
 	for (i = 0; i < (SLSI_ADHOC_PEER_CONNECTIONS_MAX); i++) {
 		struct slsi_peer *peer = ndev_vif->peer_sta_record[i];
@@ -1518,22 +1545,35 @@ int slsi_handle_disconnect(struct slsi_dev *sdev, struct net_device *dev, u8 *pe
 		 */
 		if (ndev_vif->sta.vif_status == SLSI_VIF_STATUS_CONNECTING) {
 			SLSI_NET_DBG1(dev, SLSI_MLME, "Unexpected mlme_disconnect_ind - whilst connecting\n");
-		} else if (ndev_vif->sta.vif_status == SLSI_VIF_STATUS_CONNECTED || (ndev_vif->sta.vif_status == SLSI_VIF_STATUS_DISCONNECTING)) {
-			/* Change keep alive and sync_loss reason code while sending to supplicant to a standard reason code */
-			if (reason == FAPI_REASONCODE_KEEP_ALIVE_FAILURE ||
-			    reason == FAPI_REASONCODE_SYNCHRONISATION_LOSS)
-				reason = WLAN_REASON_DEAUTH_LEAVING;
+		} else if (ndev_vif->sta.vif_status == SLSI_VIF_STATUS_CONNECTED) {
+			if (reason == FAPI_REASONCODE_SYNCHRONISATION_LOSS)
+				reason = 0; /*reason code to recognise beacon loss */
+			else if (reason == FAPI_REASONCODE_KEEP_ALIVE_FAILURE)
+				reason = WLAN_REASON_DEAUTH_LEAVING;/* Change to a standard reason code */
 
-			if (ndev_vif->sta.is_wps && ndev_vif->sta.vif_status == SLSI_VIF_STATUS_CONNECTED)
-				/* Ignore sending deauth or disassoc event to cfg80211 during WPS session */
+			if (ndev_vif->sta.is_wps) /* Ignore sending deauth or disassoc event to cfg80211 during WPS session */
 				SLSI_NET_INFO(dev, "Ignoring Deauth notification to cfg80211 from the peer during WPS procedure\n");
-			else
+			else {
 				cfg80211_disconnected(dev, reason, NULL, 0, GFP_KERNEL);
+				SLSI_NET_DBG3(dev, SLSI_MLME, "Received disconnect from AP, reason = %d\n", reason);
+			}
+		} else if (ndev_vif->sta.vif_status == SLSI_VIF_STATUS_DISCONNECTING) {
+				/* Change keep alive and sync_loss reason code while sending to supplicant to a standard reason code */
+				if (reason == FAPI_REASONCODE_KEEP_ALIVE_FAILURE ||
+				    reason == FAPI_REASONCODE_SYNCHRONISATION_LOSS)
+					reason = WLAN_REASON_DEAUTH_LEAVING;
 
+			cfg80211_disconnected(dev, reason, NULL, 0, GFP_KERNEL);
 			SLSI_NET_DBG3(dev, SLSI_MLME, "Completion of disconnect from AP\n");
 		}
 
 		ndev_vif->sta.is_wps = false;
+
+		kfree(ndev_vif->sta.assoc_req_add_info_elem);
+		if (ndev_vif->sta.assoc_req_add_info_elem) {
+			ndev_vif->sta.assoc_req_add_info_elem = NULL;
+			ndev_vif->sta.assoc_req_add_info_elem_len = 0;
+		}
 
 		cancel_delayed_work_sync(&ndev_vif->sta.roam_report_work);
 		slsi_mlme_del_vif(sdev, dev);
@@ -1554,13 +1594,7 @@ int slsi_handle_disconnect(struct slsi_dev *sdev, struct net_device *dev, u8 *pe
 			slsi_wakelock(&sdev->wlan_wl);
 		}
 		break;
-	case FAPI_VIFTYPE_ADHOC:
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-		slsi_peer_remove(sdev, dev, peer);
-#else
-		SLSI_NET_ERR(dev, "mlme_disconnect_ind(vif:%d, type:%d) ADHOC not supported\n", ndev_vif->ifnum, ndev_vif->vif_type);
-#endif
-		break;
+
 	default:
 		SLSI_NET_WARN(dev, "mlme_disconnect_ind(vif:%d, unexpected vif type:%d)\n", ndev_vif->ifnum, ndev_vif->vif_type);
 		break;
@@ -1617,14 +1651,15 @@ int slsi_set_uint_mib(struct slsi_dev *sdev, struct net_device *dev, u16 psid, i
 
 	SLSI_DBG2(sdev, SLSI_MLME, "UINT MIB Set Request (PSID = 0x%04X, Value = %d)\n", psid, value);
 
-	if (slsi_mib_encode_uint(&mib_data, psid, value, 0) == SLSI_MIB_STATUS_SUCCESS)
+	r = slsi_mib_encode_uint(&mib_data, psid, value, 0);
+	if (r == SLSI_MIB_STATUS_SUCCESS) {
 		if (mib_data.dataLength) {
 			r = slsi_mlme_set(sdev, dev, mib_data.data, mib_data.dataLength);
 			if (r != 0)
 				SLSI_ERR(sdev, "MIB (PSID = 0x%04X) set error = %d\n", psid, r);
 			kfree(mib_data.data);
 		}
-
+	}
 	return r;
 }
 
@@ -2383,7 +2418,7 @@ int slsi_auto_chan_select_scan(struct slsi_dev *sdev, int n_channels, struct iee
 
 	if (r == 0) {
 		struct sk_buff *unique_scan;
-		struct sk_buff *scan = slsi_dequeue_cached_scan_result(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_results);
+		struct sk_buff *scan = slsi_dequeue_cached_scan_result(&ndev_vif->scan[SLSI_SCAN_HW_ID], NULL);
 
 		while (scan) {
 			struct ieee80211_mgmt *mgmt = fapi_get_mgmt(scan);
@@ -2420,7 +2455,7 @@ int slsi_auto_chan_select_scan(struct slsi_dev *sdev, int n_channels, struct iee
 			}
 
 next_scan:
-			scan = slsi_dequeue_cached_scan_result(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_results);
+			scan = slsi_dequeue_cached_scan_result(&ndev_vif->scan[SLSI_SCAN_HW_ID], NULL);
 		}
 		/* Select the channel to use */
 		for (i = 0, j = 0; i < SLSI_AP_AUTO_CHANLS_LIST_FROM_HOSTAPD_MAX; i++, j = j + 5) {
@@ -2443,35 +2478,17 @@ exit_with_vif:
 	return r;
 }
 
-int slsi_set_uapsd_qos_info(struct slsi_dev *sdev, struct net_device *dev, const int qos_info)
+int slsi_set_uapsd_qos_info(struct slsi_dev *sdev, struct net_device *dev)
 {
-	struct slsi_mib_data mib_data = { 0, NULL };
 	int error = 0;
-
-	SLSI_UNUSED_PARAMETER(qos_info);
 
 	SLSI_MUTEX_LOCK(sdev->device_config_mutex);
 
-	SLSI_DBG1(sdev, SLSI_CFG80211, "QoS Info of ieee802.11 QoS capability:0x%x\n", sdev->device_config.qos_info);
-
-	error = slsi_mib_encode_uint(&mib_data, SLSI_PSID_UNIFI_STATION_QOS_INFO, sdev->device_config.qos_info, 0);
-	if (error != SLSI_MIB_STATUS_SUCCESS) {
-		SLSI_ERR(sdev, "MIB encode error\n");
-		error = -ENOMEM;
-		goto exit;
-	}
-
-	if (WARN_ON(mib_data.dataLength == 0)) {
-		error = -EINVAL;
-		goto exit;
-	}
-
-	error = slsi_mlme_set(sdev, dev, mib_data.data, mib_data.dataLength);
-	kfree(mib_data.data);
+	SLSI_DBG1(sdev, SLSI_MLME, "QoS Info of ieee802.11 QoS capability:0x%x\n", sdev->device_config.qos_info);
+	error = slsi_set_uint_mib(sdev, dev, SLSI_PSID_UNIFI_STATION_QOS_INFO, sdev->device_config.qos_info);
 	if (error)
 		SLSI_ERR(sdev, "Err setting qos info . error = %d\n", error);
 
-exit:
 	SLSI_MUTEX_UNLOCK(sdev->device_config_mutex);
 	return error;
 }
@@ -2777,12 +2794,12 @@ int slsi_p2p_dev_null_ies(struct slsi_dev *sdev, struct net_device *dev)
 
 		SLSI_NET_DBG1(dev, SLSI_CFG80211, "Stop Find - Abort ongoing P2P scan\n");
 
-		(void)slsi_mlme_del_scan(sdev, dev, ((ndev_vif->ifnum << 8) | SLSI_SCAN_HW_ID));
+		(void)slsi_mlme_del_scan(sdev, dev, ((ndev_vif->ifnum << 8) | SLSI_SCAN_HW_ID), false);
 
-		scan_result = slsi_dequeue_cached_scan_result(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_results);
+		scan_result = slsi_dequeue_cached_scan_result(&ndev_vif->scan[SLSI_SCAN_HW_ID], NULL);
 		while (scan_result) {
 			slsi_rx_scan_pass_to_cfg80211(sdev, dev, scan_result);
-			scan_result = slsi_dequeue_cached_scan_result(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_results);
+			scan_result = slsi_dequeue_cached_scan_result(&ndev_vif->scan[SLSI_SCAN_HW_ID], NULL);
 		}
 
 		WARN_ON(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_req == NULL);
@@ -2945,14 +2962,15 @@ void slsi_abort_sta_scan(struct slsi_dev *sdev)
 		struct sk_buff *scan_result;
 
 		SLSI_DBG2(sdev, SLSI_CFG80211, "Abort ongoing WLAN scan\n");
-		(void)slsi_mlme_del_scan(sdev, wlan_net_dev, ((ndev_vif->ifnum << 8) | SLSI_SCAN_HW_ID));
-		scan_result = slsi_dequeue_cached_scan_result(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_results);
+		(void)slsi_mlme_del_scan(sdev, wlan_net_dev, ((ndev_vif->ifnum << 8) | SLSI_SCAN_HW_ID), false);
+		scan_result = slsi_dequeue_cached_scan_result(&ndev_vif->scan[SLSI_SCAN_HW_ID], NULL);
 		while (scan_result) {
 			slsi_rx_scan_pass_to_cfg80211(sdev, wlan_net_dev, scan_result);
-			scan_result = slsi_dequeue_cached_scan_result(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_results);
+			scan_result = slsi_dequeue_cached_scan_result(&ndev_vif->scan[SLSI_SCAN_HW_ID], NULL);
 		}
 		cfg80211_scan_done(ndev_vif->scan[SLSI_SCAN_HW_ID].scan_req, true);
 		ndev_vif->scan[SLSI_SCAN_HW_ID].scan_req = NULL;
+		ndev_vif->scan[SLSI_SCAN_HW_ID].requeue_timeout_work = false;
 	}
 	SLSI_MUTEX_UNLOCK(ndev_vif->scan_mutex);
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
@@ -3779,113 +3797,15 @@ void slsi_scan_ind_timeout_handle(struct work_struct *work)
 
 	SLSI_MUTEX_LOCK(ndev_vif->scan_mutex);
 	if (ndev_vif->scan[SLSI_SCAN_HW_ID].scan_req) {
-		SLSI_WARN(ndev_vif->sdev, "Mlme_scan_ind not received");
-		(void)slsi_mlme_del_scan(ndev_vif->sdev, dev, ndev_vif->ifnum << 8 | SLSI_SCAN_HW_ID);
-		slsi_scan_complete(ndev_vif->sdev, dev, SLSI_SCAN_HW_ID, false);
+		if (ndev_vif->scan[SLSI_SCAN_HW_ID].requeue_timeout_work) {
+			queue_delayed_work(ndev_vif->sdev->device_wq, &ndev_vif->scan_timeout_work,
+					   msecs_to_jiffies(SLSI_FW_SCAN_DONE_TIMEOUT_MSEC));
+			ndev_vif->scan[SLSI_SCAN_HW_ID].requeue_timeout_work = false;
+		} else {
+			SLSI_WARN(ndev_vif->sdev, "Mlme_scan_done_ind not received\n");
+			(void)slsi_mlme_del_scan(ndev_vif->sdev, dev, ndev_vif->ifnum << 8 | SLSI_SCAN_HW_ID, true);
+			slsi_scan_complete(ndev_vif->sdev, dev, SLSI_SCAN_HW_ID, false);
+		}
 	}
 	SLSI_MUTEX_UNLOCK(ndev_vif->scan_mutex);
 }
-
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-int slsi_ibss_prepare_add_info_ies(struct netdev_vif *ndev_vif)
-{
-	size_t offset = 0;
-
-	SLSI_NET_DBG1(ndev_vif->wdev.netdev, SLSI_MLME, "WPA IE len = %zu, WMM info IE len = %zu, WMM param IE len = %zu, OUI_IE len = %zu\n", ndev_vif->ibss.wpa_ie_len, ndev_vif->ibss.wmm_info_ie_len, ndev_vif->ibss.wmm_param_ie_len, ndev_vif->ibss.oui_ie_len);
-
-	ndev_vif->ibss.add_info_ies_len = ndev_vif->ibss.wpa_ie_len + ndev_vif->ibss.wmm_info_ie_len + ndev_vif->ibss.wmm_param_ie_len + ndev_vif->ibss.oui_ie_len;
-	ndev_vif->ibss.add_info_ies = kmalloc(ndev_vif->ibss.add_info_ies_len, GFP_KERNEL); /* Caller needs to free this */
-
-	if (ndev_vif->ibss.add_info_ies == NULL) {
-		SLSI_NET_DBG1(ndev_vif->wdev.netdev, SLSI_MLME, "Failed to allocate memory for IEs\n");
-		ndev_vif->ibss.add_info_ies_len = 0;
-		return -ENOMEM;
-	}
-
-	if (ndev_vif->ibss.cache_wpa_ie) {
-		memcpy(ndev_vif->ibss.add_info_ies, ndev_vif->ibss.cache_wpa_ie, ndev_vif->ibss.wpa_ie_len);
-		offset += ndev_vif->ibss.wpa_ie_len;
-	}
-
-	if (ndev_vif->ibss.cache_wmm_param_ie) {
-		memcpy(ndev_vif->ibss.add_info_ies + offset, ndev_vif->ibss.cache_wmm_param_ie, ndev_vif->ibss.wmm_param_ie_len);
-		offset += ndev_vif->ibss.wmm_param_ie_len;
-	}
-
-	if (ndev_vif->ibss.cache_wmm_info_ie) {
-		memcpy(ndev_vif->ibss.add_info_ies + offset, ndev_vif->ibss.cache_wmm_info_ie, ndev_vif->ibss.wmm_info_ie_len);
-		offset += ndev_vif->ibss.wmm_info_ie_len;
-	}
-
-	if (ndev_vif->ibss.cache_oui_ie) {
-		memcpy(ndev_vif->ibss.add_info_ies + offset, ndev_vif->ibss.cache_oui_ie, ndev_vif->ibss.oui_ie_len);
-		offset += ndev_vif->ibss.oui_ie_len;
-	}
-
-	return 0;
-}
-
-int slsi_ibss_enable_blockack(struct slsi_dev *sdev, struct net_device *dev, struct slsi_peer *peer, int userpri)
-{
-	struct netdev_vif *ndev_vif = netdev_priv(dev);
-	int ret = 0;
-
-	WARN_ON(!SLSI_MUTEX_IS_LOCKED(ndev_vif->vif_mutex));
-
-	if (WARN_ON(!ndev_vif->activated))
-		return -EINVAL;
-
-	if (WARN_ON(ndev_vif->vif_type != FAPI_VIFTYPE_ADHOC))
-		return -EINVAL;
-
-	if (!peer) {
-		SLSI_NET_DBG1(dev, SLSI_NETDEV, "Ready to enable IBSS blockack: 0x%02X\n", userpri);
-		ndev_vif->ibss.ba_tx_userpri |= userpri;
-		return ret;
-	}
-
-	ret = slsi_mlme_blockack_control_req(sdev, dev, userpri, FAPI_DIRECTION_TRANSMIT, peer->address);
-	if (ret)
-		SLSI_ERR(sdev, "Failed to enable IBSS blockack(%u): %pM\n", ret, peer->address);
-
-	return ret;
-}
-
-int slsi_ibss_disable_blockack(struct slsi_dev *sdev, struct net_device *dev, int userpri)
-{
-	struct netdev_vif *ndev_vif = netdev_priv(dev);
-	struct slsi_peer *peer;
-	int i;
-	int ret = 0, ret_ba = 0;
-
-	WARN_ON(!SLSI_MUTEX_IS_LOCKED(ndev_vif->vif_mutex));
-
-	if (WARN_ON(!ndev_vif->activated))
-		return -EINVAL;
-
-	if (WARN_ON(ndev_vif->vif_type != FAPI_VIFTYPE_ADHOC))
-		return -EINVAL;
-
-	if (ndev_vif->peer_sta_records <= 0) {
-		SLSI_NET_DBG1(dev, SLSI_MLME, "No peer to disable IBSS blockack\n");
-		return -EINVAL;
-	}
-
-	ndev_vif->ibss.ba_tx_userpri &= ~userpri;
-
-	for (i = 0; i < SLSI_ADHOC_PEER_CONNECTIONS_MAX; i++) {
-		peer = ndev_vif->peer_sta_record[i];
-		if (peer && peer->valid &&
-		    !is_zero_ether_addr(peer->address) &&
-		    (peer->ba_tx_state & (SLSI_AMPDU_F_OPERATIONAL | SLSI_AMPDU_F_CREATED))) {
-			ret_ba = slsi_mlme_blockack_control_req(sdev, dev, ndev_vif->ibss.ba_tx_userpri, FAPI_DIRECTION_TRANSMIT, peer->address);
-			if (ret_ba != FAPI_RESULTCODE_SUCCESS) {
-				SLSI_ERR(sdev, "[%d]Failed to disable IBSS blockack(%u): aid=%d, %pM\n", i, ret_ba, peer->aid, peer->address);
-				ret = ret_ba;
-			}
-		}
-	}
-
-	return ret;
-}
-#endif /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */

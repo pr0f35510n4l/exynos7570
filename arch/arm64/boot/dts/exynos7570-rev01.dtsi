@@ -13,8 +13,6 @@
  * published by the Free Software Foundation.
  */
 
-/memreserve/ 0x7E300000 0x100000;
-
 #include <dt-bindings/clock/exynos7570.h>
 #include <dt-bindings/sysmmu/sysmmu.h>
 #include <dt-bindings/thermal/thermal.h>
@@ -27,6 +25,14 @@
 	interrupt-parent = <&gic>;
 	#address-cells = <2>;
 	#size-cells = <1>;
+
+	arm-pmu {
+		compatible = "arm,armv8-pmuv3";
+		interrupts = <0 50 4>,
+			     <0 51 4>,
+			     <0 52 4>,
+			     <0 53 4>;
+	};
 
 	aliases {
 		pinctrl0 = &pinctrl_0;
@@ -133,10 +139,10 @@
 		compatible = "samsung,exynos-sc-cpufreq";
 
                 cl0_idx_num = <17>;
-                cl0_max_support_idx = <6>;
+                cl0_max_support_idx = <5>;
                 cl0_min_support_idx = <14>;
-                cl0_boot_max_qos = <962000>;
-                cl0_boot_min_qos = <962000>;
+                cl0_boot_max_qos = <1378000>;
+                cl0_boot_min_qos = <1378000>;
                 cl0_boot_lock_time = <40000000>;
                 cl0_en_ema = <0>;
                 cl0_regulator = "BUCK1";
@@ -243,7 +249,7 @@
 		use_pd_off = "false";
 		reg_name = "BUCK1";
 		/* cold, cold_limit, min_cold, max_uV */
-		volt_info = <37500 1250000 0 1300000>;
+		volt_info = <25000 1250000 0 1300000>;
 
 		use_tmu = "true";
 		use_cl_dvfs = "false";
@@ -262,7 +268,7 @@
 		use_delay_time = "false";
 
 		/* <initial_freq, default_qos, suspend_freq, min, max, reboot_freq> */
-		freq_info = <467000 415000 415000 415000 467000 415000>;
+		freq_info = <467000 415000 467000 415000 467000 415000>;
 
 		/* PM QoS */
 		boot_qos_timeout = <40>;
@@ -279,7 +285,7 @@
 		use_pd_off = "false";
 		reg_name = "BUCK1";
 		/* <cold, cold_limit, min_cold, max_uV> */
-		volt_info = <37500 1250000 0 1300000>;
+		volt_info = <25000 1250000 0 1300000>;
 
 		use_tmu = "true";
 		use_cl_dvfs = "false";
@@ -315,7 +321,7 @@
 		use_pd_off = "false";
 		reg_name = "BUCK1";
 		/* cold, cold_limit, min_cold, max_uV */
-		volt_info = <37500 1250000 0 1300000>;
+		volt_info = <25000 1250000 0 1300000>;
 
 		use_tmu = "true";
 		use_cl_dvfs = "false";
@@ -334,7 +340,7 @@
 		use_delay_time = "false";
 
 		/* <initial, default_qos, suspend_freq, min, max, reboot_freq> */
-		freq_info = <554000 444000 554000 444000 554000 444000>;
+		freq_info = <444000 444000 444000 444000 554000 444000>;
 
 		/* PM QoS */
 		boot_qos_timeout = <0>;
@@ -351,16 +357,11 @@
 		use_pd_off = "true";
 		reg_name = "BUCK1";
 		/* cold, cold_limit, min_cold, max_uV */
-		volt_info = <37500 1250000 0 1300000>;
+		volt_info = <25000 1250000 0 1300000>;
 
 		use_tmu = "true";
 		use_cl_dvfs = "false";
 		use_sw_clk = "false";
-	};
-
-	ect {
-		parameter_address = <0x7E0FA000>;
-		parameter_size = <0x6000>;
 	};
 
 	pinctrl_0: pinctrl@139F0000 {
@@ -483,6 +484,21 @@
 		mbx_ap2cp_united_status = <2>;
 		sbi_uart_noti_mask = <0x1>;
 		sbi_uart_noti_pos = <16>;
+	};
+
+	/* USIM DETECTION FOR CP */
+	usim_det {
+		compatible = "samsung,exynos-usim-detect";
+
+		mbx_ap2cp_united_status = <2>;
+
+		mif,int_usim0_det_level = <4>;
+		mif,int_usim1_det_level = <5>;
+
+		sbi_usim0_det_mask = <1>;
+		sbi_usim0_det_pos = <17>;
+		sbi_usim1_det_mask = <1>;
+		sbi_usim1_det_pos = <18>;
 	};
 
 	/* UART_USI_0 */
@@ -869,6 +885,7 @@
 		clocks = <&clock 11>;
 		clock-names = "gate_speedy";
 		status = "okay";
+		samsung,always-interrupt-high;
 	};
 
 	/* SPI_ESE */
@@ -959,6 +976,11 @@
 		status = "disabled";
 	};
 
+	secgpio_dvs {
+		compatible = "samsung,exynos7570-secgpio-dvs";
+		status = "okay";
+	};
+
 	dwmmc_0: dwmmc0@13540000 {
 		compatible = "samsung,exynos-dw-mshc";
 		reg = <0x0 0x13540000 0x2000>;
@@ -1003,7 +1025,7 @@
 		ip_ver = <17>;
 		clock_rate = <415000000>;
 		min_rate = <100000>;
-		num_qos_steps = <1>;
+		num_qos_steps = <2>;
 		mfc_qos_table {
 			mfc_qos_variant_0 {
 				thrd_mb = <0>;
@@ -1014,6 +1036,15 @@
 				freq_kfc = <0>;
 				has_enc_table = <0>;
 			};
+			mfc_qos_variant_1 {
+				thrd_mb = <244800>;
+				freq_mfc = <0>;
+				freq_int = <415000>;
+				freq_mif = <666000>;
+				freq_cpu = <0>;
+				freq_kfc = <0>;
+				has_enc_table = <0>;
+			};			
 		};
 	};
 
@@ -1096,6 +1127,7 @@
 		mcu,name = "mcu_ipc_cp";
 		mcu,id = <0>;
 		interrupts = <0 369 0 >;
+		mcu,irq_affinity_mask = <3>;
 	};
 
 	mailbox_gnss: mcu_ipc@10570000 {
@@ -1159,33 +1191,25 @@
 		shmem,ipc_reg_cnt = <32>;
 	};
 
-        /* If Device memory is required: */
-        /*
-        reserved-memory {
-                #address-cells = <2>;
-                #size-cells = <1>;
-                ranges;
+	cmu_fsys: cmu_fsys@0x13730000 {
+		compatible = "samsung,exynos7570-cmu_fsys", "syscon";
+		reg = <0x0 0x13730000 0x2000>;
+	};
 
-                wlbt_region: wlbtmem@fa00000 {
-                        reg = <0 0x98200000 0x400000>;
-                        no-map;
-                };
-        };
-        */
-
-        scsc_wifibt: scsc_wifibt@10580000 {
-                compatible = "samsung,scsc_wifibt";
-                /* If Device memory is required:
-                memory-region = <&wlbt_region>;
-                */
-                /* Mailbox registers */
-                reg = <0x0 0x10580000 0x180>;
-                interrupts = <0 376 4>, <0 21 4>, <0 476 4>;
-                interrupt-names = "MBOX","ALIVE","WDOG";
-                /* PMU alive handle */
-                samsung,syscon-phandle = <&pmu_system_controller>;
-                status = "okay";
-        };
+	scsc_wifibt: scsc_wifibt@10580000 {
+		compatible = "samsung,scsc_wifibt";
+		/* Mailbox registers */
+		reg = <0x0 0x10580000 0x180>;
+		interrupts = <0 376 4>, <0 21 4>, <0 476 4>;
+		interrupt-names = "MBOX","ALIVE","WDOG";
+		/* PMU alive handle */
+		samsung,syscon-phandle = <&pmu_system_controller>;
+		/* USBPLL ownership */
+		samsung,syscon-cmu_fsys = <&cmu_fsys>;
+		usbpll,owner="y";
+		usbpll,udelay=<20>;
+		status = "okay";
+	};
 
 	iommu-domain_mfc_mscl {
 		compatible = "samsung,exynos-iommu-bus";
@@ -1358,11 +1382,16 @@
 	usbdrd_phy: usbphy@135c0000 {
 		compatible = "samsung,exynos7570-usbdrd-phy";
 		reg = <0x0 0x135c0000 0x100>;
-		clocks = <&clock 512>, <&clock 520>;
-		clock-names = "usbdrd20", "phyumux";
+		clocks = <&clock 512>, <&clock 520>, <&clock 530>;
+		clock-names = "usbdrd20", "phyumux", "usb_pll";
 		#phy-cells = <1>;
 		samsung,pmu-syscon = <&pmu_system_controller>;
 		is_not_vbus_pad;
+		use_additional_tuning;
+		request_extrefclk;
+		uart_io_share_enable = <1>;
+		uart_io_share_offset = <0x6200>;
+		uart_io_share_mask = <0x1>;
 		status = "disabled";
 	};
 
@@ -1473,22 +1502,99 @@
 			<&clock 43>;
 
 		status = "ok";
-	 };
-	fm@14840000 {
-		compatible = "samsung,exynos7570-fm";
-		reg = <0x0 0x14840000 0x2000>, 
-                       <0x0 0x11C80000 0x1000>,
-                       <0x0 0x10580000 0x100>,
-                       <0x0 0x148D0000 0x500>,
-                       <0x0 0x10460000 0x3000>,
-                       <0x0 0x13730000 0x2000>,
-                       <0x0 0x14880000 0x100>;
-		interrupts = <0 195 0>;
-        clocks = <&clock 743>;  /* fm_52M_div */
-        clock-names = "oscclk_fm_52m_div";
-        samsung,syscon-phandle = <&pmu_system_controller>;
-        samsung,power-domain = <&spd_aud>;
-        status = "okay";
 	};
 
+	fm@14840000 {
+		compatible = "samsung,exynos7570-fm";
+		reg = <0x0 0x14840000 0x2000>,
+			<0x0 0x11C80000 0x1000>,
+			<0x0 0x10580000 0x100>,
+			<0x0 0x148D0000 0x500>,
+			<0x0 0x10460000 0x3000>,
+			<0x0 0x13730000 0x2000>,
+			<0x0 0x14880000 0x100>;
+		interrupts = <0 195 0>;
+		clocks = <&clock 743>;  /* fm_52M_div */
+		clock-names = "oscclk_fm_52m_div";
+		samsung,syscon-phandle = <&pmu_system_controller>;
+		samsung,power-domain = <&spd_fm>;
+		status = "okay";
+	};
+
+	exynos-powermode {
+		compatible = "exynos,powermode";
+
+		/*	        sicd		sicd_cpd	aftr		stop
+		 * 		lpd		lpa		alpa		dstop
+		 *		sleep
+		 */
+		wakeup_mask =  <0x400F91E1>,	<0x0>,		<0x0>,		<0x0>,
+			       <0x0>,		<0x0>,		<0x0>,		<0x0>,
+			       <0x400FFFFE>;
+		wakeup_mask2 = <0x0>,		<0x0>,		<0x0>,		<0x0>,
+			       <0x0>,		<0x0>,		<0x0>,		<0x0>,
+			       <0xFFFF00FF>;
+		wakeup_mask3 = <0x0>,		<0x0>,		<0x0>,		<0x0>,
+			       <0x0>,		<0x0>,		<0x0>,		<0x0>,
+			       <0xFFFF00FF>;
+
+		cpd_residency = <3000>;
+		sicd_residency = <3000>;
+
+		sicd_enabled = <0>;
+
+		idle-ip = "136c0000.pwm",		/* idle ip index : 0 */
+			  "10550000.adc",		/* idle ip index : 1 */
+
+			  "10510000.hsi2c",		/* idle ip index : 2 */
+			  "13950000.hsi2c",		/* idle ip index : 3 */
+			  "13960000.hsi2c",		/* idle ip index : 4 */
+			  "138a0000.hsi2c",		/* idle ip index : 5 */
+			  "138b0000.hsi2c",		/* idle ip index : 6 */
+			  "138c0000.hsi2c",		/* idle ip index : 7 */
+			  "138f0000.hsi2c",		/* idle ip index : 8 */
+
+			  "13870000.i2c",		/* idle ip index : 9 */
+			  "13880000.i2c",		/* idle ip index : 10 */
+			  "13890000.i2c",		/* idle ip index : 11 */
+			  "13840000.i2c",		/* idle ip index : 12 */
+			  "13830000.i2c",		/* idle ip index : 13 */
+			  "138d0000.i2c",		/* idle ip index : 14 */
+			  "138e0000.i2c",		/* idle ip index : 15 */
+			  "13850000.i2c",		/* idle ip index : 16 */
+			  "13860000.i2c",		/* idle ip index : 17 */
+
+			  "13540000.dwmmc0",		/* idle ip index : 18 */
+			  "13560000.dwmmc2",		/* idle ip index : 19 */
+
+			  "13600000.usb",		/* idle ip index : 20 */
+
+			  "100c0000.spi",		/* idle ip index : 21 */
+			  "13900000.spi",		/* idle ip index : 22 */
+			  "13910000.spi",		/* idle ip index : 23 */
+			  "13920000.spi",		/* idle ip index : 24 */
+			  "13930000.spi",		/* idle ip index : 25 */
+
+			  "10500000.mailbox-cp",	/* idle ip index : 26 */
+			  "10570000.mailbox-gnss",	/* idle ip index : 27 */
+
+			  "14830000.decon_fb",		/* idle ip index : 28 */
+			  "pd-g3d",			/* idle ip index : 29 */
+			  "pd-isp",			/* idle ip index : 30 */
+			  "pd-mfcmscl",			/* idle ip index : 31 */
+			  "148f0000.lpass";             /* idle ip index : 32 */
+		idle_ip_mask {
+			sicd: SYS_SICD {
+				mode-index = <0>;
+				ref-idle-ip = <0>,  <1>,  <2>,  <3>,  <4>,  <5>,  <6>,  <7>,  <8>,  <9>,
+					     <10>, <11>, <12>, <13>, <14>, <15>, <16>, <17>, <18>, <19>,
+					     <20>, <21>, <22>, <23>, <24>, <25>, <26>, <27>, <28>, <29>,
+					     <30>, <31>, <32>;
+			};
+		};
+	};
+
+	fips-fmp {
+		compatible = "samsung,exynos-fips-fmp";
+	};
 };

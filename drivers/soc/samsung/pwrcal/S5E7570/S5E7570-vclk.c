@@ -759,6 +759,7 @@ void vclk_init(void)
 	ADD_LIST(vclk_dfs_list, dvfs_int);
 	ADD_LIST(vclk_dfs_list, dvfs_disp);
 	ADD_LIST(vclk_dfs_list, dvfs_cam);
+	ADD_LIST(vclk_dfs_list, dvs_cp);
 
 	vclk_enable(VCLK(gate_peri_peric0));
 	vclk_enable(VCLK(gate_peri_peric1));

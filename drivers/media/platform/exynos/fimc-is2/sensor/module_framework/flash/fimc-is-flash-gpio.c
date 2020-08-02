@@ -271,6 +271,7 @@ static const struct of_device_id exynos_fimc_is_sensor_flash_gpio_match[] = {
 	{
 		.compatible = "samsung,sensor-front-flash-gpio",
 	},
+	{},
 };
 MODULE_DEVICE_TABLE(of, exynos_fimc_is_sensor_flash_gpio_match);
 

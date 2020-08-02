@@ -23,7 +23,6 @@
 #include <linux/err.h>
 #include <linux/firmware.h>
 #include <linux/gpio.h>
-#include <linux/input/input_booster.h>
 #include "ist30xxc.h"
 #include "ist30xxc_update.h"
 #if IST30XX_DEBUG
@@ -32,6 +31,8 @@
 #if IST30XX_CMCS_TEST
 #include "ist30xxc_cmcs.h"
 #endif
+
+#include <linux/sec_sysfs.h>
 
 #if SEC_FACTORY_MODE
 #define COMMAND_LENGTH		64
@@ -167,8 +168,7 @@ static void not_support_cmd(void *dev_data)
 	mutex_unlock(&sec->cmd_lock);
 
 	sec->cmd_state = CMD_STATE_NA;
-	dev_info(&data->client->dev, "%s: \"%s(%d)\"\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: \"%s\"\n", __func__, buf);
 	return;
 }
 
@@ -185,8 +185,7 @@ static void get_chip_vendor(void *dev_data)
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	sec->cmd_state = CMD_STATE_OK;
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 static void get_chip_name(void *dev_data)
@@ -202,8 +201,7 @@ static void get_chip_name(void *dev_data)
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	sec->cmd_state = CMD_STATE_OK;
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 static void get_chip_id(void *dev_data)
@@ -219,8 +217,7 @@ static void get_chip_id(void *dev_data)
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	sec->cmd_state = CMD_STATE_OK;
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 #include <linux/uaccess.h>
 #define MAX_FW_PATH 255
@@ -270,8 +267,7 @@ static void fw_update(void *dev_data)
 		snprintf(fw_path, MAX_FW_PATH, "/sdcard/%s", IST30XX_FW_NAME);
 		fp = filp_open(fw_path, O_RDONLY, 0);
 		if (IS_ERR(fp)) {
-			tsp_warn("%s(), file %s open error:%d\n", __func__,
-					fw_path, fp);
+			tsp_warn("%s(), file %s open error\n", __func__, fw_path);
 			sec->cmd_state= CMD_STATE_FAIL;
 			set_fs(old_fs);
 			break;
@@ -378,8 +374,7 @@ static void get_fw_ver_bin(void *dev_data)
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	sec->cmd_state = CMD_STATE_OK;
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 
 	if (data->dt_data->fw_bin && firmware) {
 		release_firmware(firmware);
@@ -399,8 +394,7 @@ static void get_config_ver(void *dev_data)
 
         set_cmd_result(sec, buff, strnlen(buff, sizeof(buff)));
         sec->cmd_state = CMD_STATE_OK;
-        tsp_info("%s(): %s(%d)\n", __func__, buff,
-                 strnlen(buff, sizeof(buff)));
+        tsp_info("%s(): %s\n", __func__, buff);
 }
 static void get_checksum_data(void *dev_data)
 {
@@ -429,8 +423,7 @@ static void get_checksum_data(void *dev_data)
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	sec->cmd_state = CMD_STATE_OK;
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 static void get_fw_ver_ic(void *dev_data)
@@ -460,8 +453,7 @@ static void get_fw_ver_ic(void *dev_data)
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	sec->cmd_state = CMD_STATE_OK;
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 static void set_edge_mode(void *dev_data)
@@ -496,8 +488,7 @@ static void set_edge_mode(void *dev_data)
 		snprintf(buf, sizeof(buf), "%s", "NG");
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 static void get_threshold(void *dev_data)
@@ -527,8 +518,7 @@ static void get_threshold(void *dev_data)
 
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	sec->cmd_state = CMD_STATE_OK;
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__,
-			buf, (int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 static void get_scr_x_num(void *dev_data)
@@ -549,8 +539,7 @@ static void get_scr_x_num(void *dev_data)
 	if (val >= 0) {
 		snprintf(buf, sizeof(buf), "%u", val);
 		sec->cmd_state = CMD_STATE_OK;
-		dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-				(int)strnlen(buf, sizeof(buf)));
+		dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 	} else {
 		snprintf(buf, sizeof(buf), "%s", "NG");
 		sec->cmd_state = CMD_STATE_FAIL;
@@ -579,8 +568,7 @@ static void get_scr_y_num(void *dev_data)
 	if (val >= 0) {
 		snprintf(buf, sizeof(buf), "%u", val);
 		sec->cmd_state = CMD_STATE_OK;
-		dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-				(int)strnlen(buf, sizeof(buf)));
+		dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 	} else {
 		snprintf(buf, sizeof(buf), "%s", "NG");
 		sec->cmd_state = CMD_STATE_FAIL;
@@ -609,8 +597,7 @@ static void get_all_x_num(void *dev_data)
 	if (val >= 0) {
 		snprintf(buf, sizeof(buf), "%u", val);
 		sec->cmd_state = CMD_STATE_OK;
-		dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-				(int)strnlen(buf, sizeof(buf)));
+		dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 	} else {
 		snprintf(buf, sizeof(buf), "%s", "NG");
 		sec->cmd_state = CMD_STATE_FAIL;
@@ -639,48 +626,13 @@ static void get_all_y_num(void *dev_data)
 	if (val >= 0) {
 		snprintf(buf, sizeof(buf), "%u", val);
 		sec->cmd_state = CMD_STATE_OK;
-		dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-				(int)strnlen(buf, sizeof(buf)));
+		dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 	} else {
 		snprintf(buf, sizeof(buf), "%s", "NG");
 		sec->cmd_state = CMD_STATE_FAIL;
 		dev_info(&data->client->dev,
 				"%s: fail to read all num of y (%d).\n", __func__, val);
 	}
-	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	tsp_info("%s(), %s\n", __func__, buf);
-}
-
-/*
- *	DVFS_STAGE_NONE	0x0001  : 0000 0000 0000 0001
- *	DVFS_STAGE_SINGLE	0x0002  : 0000 0000 0000 0010
- *	DVFS_STAGE_DUAL	0x0004  : 0000 0000 0000 0100
- */
-static void boost_level(void *dev_data)
-{
-	struct ist30xx_data *data = (struct ist30xx_data *)dev_data;
-	struct sec_factory *sec = (struct sec_factory *)&data->sec;
-	char buf[16] = { 0 };
-	int ret;
-
-	set_default_result(sec);
-
-	ret = input_booster_set_level_change(sec->cmd_param[0]);
-	if (ret < 0) {
-		snprintf(buf, sizeof(buf), "%u", sec->cmd_param[0]);
-		sec->cmd_state = CMD_STATE_FAIL;
-		goto out_boost_level;
-	}
-
-	snprintf(buf, sizeof(buf), "%u", sec->cmd_param[0]);
-	sec->cmd_state = CMD_STATE_OK;
-
-out_boost_level:
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-			(int)strnlen(buf, sizeof(buf)));
-
-	sec->cmd_state = CMD_STATE_WAITING;
-
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	tsp_info("%s(), %s\n", __func__, buf);
 }
@@ -692,24 +644,13 @@ int check_tsp_channel(void *dev_data, int width, int height)
 	struct ist30xx_data *data = (struct ist30xx_data *)dev_data;
 	struct sec_factory *sec = (struct sec_factory *)&data->sec;
 
-	if (data->tsp_info.dir.swap_xy) {
-		if ((sec->cmd_param[0] < 0) || (sec->cmd_param[0] >= height) ||
-			(sec->cmd_param[1] < 0) || (sec->cmd_param[1] >= width)) {
-			tsp_info("%s: parameter error: %u,%u\n",
-				 __func__, sec->cmd_param[0], sec->cmd_param[1]);
-		} else {
-			node = sec->cmd_param[1] + sec->cmd_param[0] * width;
-			tsp_info("%s: node = %d\n", __func__, node);
-		}
-	} else {
-		if ((sec->cmd_param[0] < 0) || (sec->cmd_param[0] >= width) ||
+	if ((sec->cmd_param[0] < 0) || (sec->cmd_param[0] >= width) ||
 			(sec->cmd_param[1] < 0) || (sec->cmd_param[1] >= height)) {
 		tsp_info("%s: parameter error: %u,%u\n",
 				__func__, sec->cmd_param[0], sec->cmd_param[1]);
-		} else {
+	} else {
 		node = sec->cmd_param[0] + sec->cmd_param[1] * width;
 		tsp_info("%s: node = %d\n", __func__, node);
-		}
 	}
 
 	return node;
@@ -823,8 +764,7 @@ void run_raw_read(void *dev_data)
 
 	sec->cmd_state = CMD_STATE_OK;
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-			(int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 void run_raw_read_key(void *dev_data)
@@ -859,8 +799,7 @@ void run_raw_read_key(void *dev_data)
 
 	sec->cmd_state = CMD_STATE_OK;
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-			(int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 void get_raw_value(void *dev_data)
@@ -886,8 +825,7 @@ void get_raw_value(void *dev_data)
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	tsp_info("%s(), [%d][%d]: %s\n", __func__,
 			sec->cmd_param[0], sec->cmd_param[1], buf);
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-			(int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 extern u8 *ts_cmcs_bin;
@@ -1000,11 +938,8 @@ int get_read_all_data(struct ist30xx_data *data, u8 flag)
 			case TEST_CM_ALL_DATA:
 				count += snprintf(temp, 10, "%d,", ts_cmcs_buf->cm[ii]);
 				break;
-			case TEST_SLOPE0_ALL_DATA:
+			case TEST_SLOPE_ALL_DATA:
 				count += snprintf(temp, 10, "%d,", ts_cmcs_buf->slope0[ii]);
-				break;
-			case TEST_SLOPE1_ALL_DATA:
-				count += snprintf(temp, 10, "%d,", ts_cmcs_buf->slope1[ii]);
 				break;
 			case TEST_CS_ALL_DATA:
 				count += snprintf(temp, 10, "%d,", ts_cmcs_buf->cs[ii]);
@@ -1044,28 +979,14 @@ void get_cm_all_data(void *dev_data) {
 
 }
 
-void get_slope0_all_data(void *dev_data) {
+void get_slope_all_data(void *dev_data) {
 	struct ist30xx_data *data = (struct ist30xx_data *)dev_data;
 	struct sec_factory *sec = (struct sec_factory *)&data->sec;
 	int ret;
 
 	set_default_result(sec);
 
-	ret = get_read_all_data(data, TEST_SLOPE0_ALL_DATA);
-	if (ret < 0)
-		sec->cmd_state = CMD_STATE_FAIL;
-	else
-		sec->cmd_state = CMD_STATE_OK;
-}
-
-void get_slope1_all_data(void *dev_data) {
-	struct ist30xx_data *data = (struct ist30xx_data *)dev_data;
-	struct sec_factory *sec = (struct sec_factory *)&data->sec;
-	int ret;
-
-	set_default_result(sec);
-
-	ret = get_read_all_data(data, TEST_SLOPE1_ALL_DATA);
+	ret = get_read_all_data(data, TEST_SLOPE_ALL_DATA);
 	if (ret < 0)
 		sec->cmd_state = CMD_STATE_FAIL;
 	else
@@ -1150,8 +1071,7 @@ void run_cm_test(void *dev_data)
 
 	sec->cmd_state = CMD_STATE_OK;
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-			(int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 void run_cm_test_key(void *dev_data)
@@ -1217,8 +1137,7 @@ void run_cm_test_key(void *dev_data)
 
 	sec->cmd_state = CMD_STATE_OK;
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-			(int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 void get_cm_value(void *dev_data)
@@ -1244,8 +1163,7 @@ void get_cm_value(void *dev_data)
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	tsp_info("%s(), [%d][%d]: %s\n", __func__,
 			sec->cmd_param[0], sec->cmd_param[1], buf);
-	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf,
-			(int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 void run_cmcs_test(void *dev_data)
@@ -1286,8 +1204,7 @@ void run_cmcs_test(void *dev_data)
 
 	sec->cmd_state = CMD_STATE_OK;
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
-	dev_info(&data->client->dev, "%s: %s(%d)\n",
-			__func__, buf,	(int)strnlen(buf, sizeof(buf)));
+	dev_info(&data->client->dev, "%s: %s\n", __func__, buf);
 }
 
 void get_cm_array(void *dev_data)
@@ -1459,6 +1376,7 @@ void get_cs_array(void *dev_data)
 	dev_info(&data->client->dev, "%s: %s(%d)\n", __func__, buf, count);
 	kfree(buf);
 }
+
 /* sysfs: /sys/class/sec/tsp/close_tsp_test */
 static ssize_t show_close_tsp_test(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -1482,6 +1400,11 @@ static ssize_t store_cmd(struct device *dev, struct device_attribute
 	bool cmd_found = false;
 	int param_cnt = 0;
 	int ret;
+
+	if (strlen(buf) >= SEC_CMD_STR_LEN) {
+		tsp_err("%s: cmd length is over (%s,%d)!!\n", __func__, buf, (int)strlen(buf));
+		goto err_out;
+	}
 
 	if (sec->cmd_is_running == true) {
 		dev_err(&client->dev, "tsp_cmd: other cmd is running.\n");
@@ -1543,7 +1466,7 @@ static ssize_t store_cmd(struct device *dev, struct device_attribute
 				param_cnt++;
 			}
 			cur++;
-		} while (cur - buf <= len);
+		} while ((cur - buf <= len) && (param_cnt < SEC_CMD_PARAM_NUM));
 	}
 	tsp_info("SEC CMD = %s\n", tsp_cmd_ptr->cmd_name);
 
@@ -1555,6 +1478,7 @@ static ssize_t store_cmd(struct device *dev, struct device_attribute
 err_out:
 	return count;
 }
+
 /* sysfs: /sys/class/sec/tsp/cmd_status */
 static ssize_t show_cmd_status(struct device *dev,
 		struct device_attribute *devattr, char *buf)
@@ -1661,7 +1585,6 @@ struct tsp_cmd tsp_cmds[] = {
 	{ TSP_CMD("get_all_x_num",	 get_all_x_num),},
 	{ TSP_CMD("get_all_y_num",	 get_all_y_num),},
 	{ TSP_CMD("clear_cover_mode", not_support_cmd),},
-	{ TSP_CMD("boost_level", boost_level),},
 	{ TSP_CMD("run_reference_read", run_raw_read),  },
 	{ TSP_CMD("run_reference_read_key", run_raw_read_key),},
 	{ TSP_CMD("get_reference",   get_raw_value),   },
@@ -1670,8 +1593,7 @@ struct tsp_cmd tsp_cmds[] = {
 	{ TSP_CMD("get_raw_value",   get_raw_value),   },
 	{ TSP_CMD("get_raw_all_data", get_raw_all_data),},
 	{ TSP_CMD("get_cm_all_data", get_cm_all_data),},
-	{ TSP_CMD("get_slope0_all_data", get_slope0_all_data),},
-	{ TSP_CMD("get_slope1_all_data", get_slope1_all_data),},
+	{ TSP_CMD("get_slope_all_data", get_slope_all_data),},
 	{ TSP_CMD("get_cs_all_data", get_cs_all_data),},
 	{ TSP_CMD("get_checksum_data", get_checksum_data),},
 	{ TSP_CMD("run_cm_test",     run_cm_test),     },
@@ -1733,39 +1655,7 @@ err_alloc_tmp:
 err_alloc:
 	return snprintf(buf, PAGE_SIZE, "NULL\n");
 }
-#if defined(CONFIG_TOUCH_KEY_LED)
-static ssize_t touch_led_control(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
-{
-	struct ist30xx_data *info = dev_get_drvdata(dev);
-	struct i2c_client *client = info->client;
-	int data;
-	int ret;
 
-	ret = sscanf(buf, "%d", &data);
-	if (ret != 1) {
-		dev_err(&client->dev, "%s: cmd read err\n", __func__);
-		return size;
-	}
-
-	if (!(data == 0 || data == 1)) {
-		dev_err(&client->dev, "%s: wrong command(%d)\n",
-				__func__, data);
-		return size;
-	}
-
-
-	tsp_info("[TKEY] %s : %d\n", __func__, data);
-
-	if (data == 1) {
-		if (info->dt_data->keyled_en_gpio >= 0)
-			gpio_direction_output(info->dt_data->keyled_en_gpio, 1);
-	} else {
-		if (info->dt_data->keyled_en_gpio >= 0)
-			gpio_direction_output(info->dt_data->keyled_en_gpio, 0);
-	}
-
-	return size;
-}
 /* sysfs - touchkey */
 static DEVICE_ATTR(touchkey_menu, S_IRUGO,
 		recent_sensitivity_show, NULL);
@@ -1782,17 +1672,11 @@ static DEVICE_ATTR(cmd, S_IWUSR | S_IWGRP, NULL, store_cmd);
 static DEVICE_ATTR(cmd_status, S_IRUGO, show_cmd_status, NULL);
 static DEVICE_ATTR(cmd_result, S_IRUGO, show_cmd_result, NULL);
 static DEVICE_ATTR(cmd_list, S_IRUGO, show_cmd_list, NULL);
-#if defined(CONFIG_TOUCH_KEY_LED)
-static DEVICE_ATTR(brightness, 0664, NULL, touch_led_control);
-#endif
 static struct attribute *sec_tkey_attributes[] = {
 	&dev_attr_touchkey_menu.attr,
 	&dev_attr_touchkey_recent.attr,
 	&dev_attr_touchkey_back.attr,
 	&dev_attr_touchkey_threshold.attr,
-#if defined(CONFIG_TOUCH_KEY_LED)
-	&dev_attr_brightness.attr,
-#endif
 	NULL,
 };
 
@@ -1820,21 +1704,21 @@ int sec_touch_sysfs(struct ist30xx_data *data)
 {
 	int ret;
 
+#if IST30XX_USE_KEY
 	/* /sys/class/sec/sec_touchkey */
-	if (!data->dt_data->tkey) {
-		sec_touchkey = device_create(sec_class, NULL, 1, data, "sec_touchkey");
-		if (IS_ERR(sec_touchkey)) {
-			tsp_err("Failed to create device (%s)!\n", "sec_touchkey");
-			goto err_sec_touchkey;
-		}
-		/* /sys/class/sec/sec_touchkey/... */
-		if (sysfs_create_group(&sec_touchkey->kobj, &sec_tkey_attr_group)) {
-			tsp_err("Failed to create sysfs group(%s)!\n", "sec_touchkey");
-			goto err_sec_touchkey_attr;
-		}
+	sec_touchkey = sec_device_create(data, "sec_touchkey");
+	if (IS_ERR(sec_touchkey)) {
+		tsp_err("Failed to create device (%s)!\n", "sec_touchkey");
+		goto err_sec_touchkey;
 	}
+	/* /sys/class/sec/sec_touchkey/... */
+	if (sysfs_create_group(&sec_touchkey->kobj, &sec_tkey_attr_group)) {
+		tsp_err("Failed to create sysfs group(%s)!\n", "sec_touchkey");
+		goto err_sec_touchkey_attr;
+	}
+#endif
 	/* /sys/class/sec/tsp */
-	sec_fac_dev = device_create(sec_class, NULL, 2, data, "tsp");
+	sec_fac_dev = sec_device_create(data, "tsp");
 	if (IS_ERR(sec_fac_dev)) {
 		tsp_err("Failed to create device (%s)!\n", "tsp");
 		goto err_sec_fac_dev;
@@ -1850,14 +1734,19 @@ int sec_touch_sysfs(struct ist30xx_data *data)
 
 	return 0;
 
+#if IST30XX_USE_KEY
 err_sec_fac_dev_attr:
-	device_destroy(sec_class, 2);
+	sec_device_destroy(2);
 err_sec_fac_dev:
 err_sec_touchkey_attr:
-        if (!data->dt_data->tkey) {
-		device_destroy(sec_class, 1);
-	}
+	sec_device_destroy(1);
 err_sec_touchkey:
+#else
+	err_sec_fac_dev_attr:
+		sec_device_destroy(1);
+	err_sec_fac_dev:
+#endif
+
 	return -ENODEV;
 }
 EXPORT_SYMBOL(sec_touch_sysfs);
@@ -1890,13 +1779,12 @@ void sec_touch_sysfs_remove(struct ist30xx_data *data)
 {
 	sysfs_remove_link(&sec_fac_dev->kobj, "input");
 	sysfs_remove_group(&sec_fac_dev->kobj, &sec_touch_factory_attr_group);
-	if (!data->dt_data->tkey) {
-		sysfs_remove_group(&sec_touchkey->kobj, &sec_tkey_attr_group);
-		device_destroy(sec_class, 1);
-	}
-	device_destroy(sec_class, 2);
+	sysfs_remove_group(&sec_touchkey->kobj, &sec_tkey_attr_group);
+	sec_device_destroy(2);
+	sec_device_destroy(1);
 }
 EXPORT_SYMBOL(sec_touch_sysfs_remove);
+
 void sec_fac_cmd_remove(struct ist30xx_data *data)
 {
 	struct sec_factory *sec = (struct sec_factory *)&data->sec;
@@ -1906,4 +1794,3 @@ void sec_fac_cmd_remove(struct ist30xx_data *data)
 }
 EXPORT_SYMBOL(sec_fac_cmd_remove);
 #endif
-#endif /* SEC_FACTORY_MODE */

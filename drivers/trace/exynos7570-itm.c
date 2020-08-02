@@ -70,6 +70,7 @@
 #define TIMEOUT_TEST			(0x1)
 
 #define NEED_TO_CHECK			(0xCAFE)
+#define BAAW_RETURN			(0x08000000)
 
 struct itm_rpathinfo {
 	unsigned int id;
@@ -373,15 +374,18 @@ static void itm_init(struct itm_dev *itm, bool enabled)
 
 static void itm_post_handler_by_master(struct itm_dev *itm,
 					struct itm_nodegroup *group,
-					char *port, char *master, bool read)
+					char *port, char *master, unsigned int target)
 {
 	/* After treatment by port */
 	if (!port || strlen(port) < 1)
 		return;
 
 	if (!strncmp(port, "CP", strlen(port))) {
-		/* if master is DSP and operation is read, we don't care this */
-		if (master && !strncmp(master, "TL3MtoL2",strlen(master)) && read == true) {
+		/*
+		 * if master is DSP and baaw returns remap address
+		 * we don't care this
+		 */
+		if (master && !strncmp(master, "TL3MtoL2",strlen(master)) && target == BAAW_RETURN) {
 			group->panic_delayed = true;
 			group->irq_occurred = 0;
 			pr_info("ITM skips CP's DSP(TL3MtoL2) detected\n");
@@ -404,7 +408,7 @@ static void itm_post_handler_by_master(struct itm_dev *itm,
 static void itm_report_route(struct itm_dev *itm,
 				struct itm_nodegroup *group,
 				struct itm_nodeinfo *node,
-				unsigned int offset, bool read)
+				unsigned int offset, unsigned int target)
 {
 	struct itm_masterinfo *master = NULL;
 	struct itm_rpathinfo *rpath = NULL;
@@ -465,7 +469,7 @@ static void itm_report_route(struct itm_dev *itm,
 		source ? source : "",
 		dest ? dest : "Note other NODE Information");
 
-	itm_post_handler_by_master(itm, group, port, source, read);
+	itm_post_handler_by_master(itm, group, port, source, target);
 }
 
 static void itm_report_info(struct itm_dev *itm,
@@ -473,17 +477,17 @@ static void itm_report_info(struct itm_dev *itm,
 			       struct itm_nodeinfo *node,
 			       unsigned int offset)
 {
-	unsigned int val, errcode, int_info, info0, info1, info2;
+	unsigned int errcode, int_info, info0, info1, info2;
 	bool read = false, req = false;
 
-	val = __raw_readl(node->regs + offset + REG_INT_INFO);
-	if (!BIT_ERR_VALID(val)) {
+	int_info = __raw_readl(node->regs + offset + REG_INT_INFO);
+	if (!BIT_ERR_VALID(int_info)) {
 		pr_info("no information, %s/offset:%x is stopover, "
 			"check other node\n", node->name, offset);
 		return;
 	}
 
-	errcode = BIT_ERR_CODE(val);
+	errcode = BIT_ERR_CODE(int_info);
 	info0 = __raw_readl(node->regs + offset + REG_EXT_INFO_0);
 	info1 = __raw_readl(node->regs + offset + REG_EXT_INFO_1);
 	info2 = __raw_readl(node->regs + offset + REG_EXT_INFO_2);
@@ -516,7 +520,7 @@ static void itm_report_info(struct itm_dev *itm,
 		goto out;
 	}
 	/* Normally fall down to here */
-	itm_report_route(itm, group, node, offset, read);
+	itm_report_route(itm, group, node, offset, info0);
 
 	pr_info("\n--------------------------------------------------------------------------------\n\n"
 		"TRANSACTION INFORMATION\n"
@@ -644,6 +648,7 @@ static irqreturn_t itm_irq_handler(int irq, void *data)
 			else
 				group->irq_occurred++;
 		}
+		group->panic_delayed = false;
 	} else {
 		pr_info("can't the group - irq:%d\n", irq);
 	}

@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  *****************************************************************************/
 #include <net/cfg80211.h>
@@ -128,6 +128,7 @@ int slsi_fw_test_signal_with_udi_header(struct slsi_dev *sdev, struct slsi_fw_te
 		case MLME_START_CFM:
 			SLSI_DBG2(sdev, SLSI_FW_TEST, "0x%p: Process MLME_START_CFM(0x%.4X, vif:%d)\n", skb, le16_to_cpu(fapi_header->id), le16_to_cpu(fapi_header->vif));
 			slsi_fw_test_process_frame(sdev, fwtest, skb, true);
+			sdev->device_config.ap_disconnect_ind_timeout =  SLSI_DEFAULT_AP_DISCONNECT_IND_TIMEOUT;
 			break;
 		default:
 			break;

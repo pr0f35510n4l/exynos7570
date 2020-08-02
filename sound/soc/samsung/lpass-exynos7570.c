@@ -610,8 +610,7 @@ static int lpass_probe(struct platform_device *pdev)
 		return -ENXIO;
 	}
 
-
-	lpass.regs = ioremap(res->start, resource_size(res));
+	lpass.regs = ioremap(res->start, res->end);
 	if (!lpass.regs) {
 		dev_err(dev, "SFR ioremap failed\n");
 		return -ENOMEM;

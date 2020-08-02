@@ -298,8 +298,10 @@ void acpm_log_print(void)
 		exynos_ss_acpm(time, str, val);
 		if (debug->debug_logging_level == 1)
 			pr_info("[ACPM_FW][%llu] id:%u, %s, %u\n", time, id, str, val);
-		else
+		else {
 			exynos_ss_printk("[ACPM_FW][%llu] id:%u, %s, %u\n", time, id, str, val);
+			trace_printk("[ACPM_FW][%llu] id:%u, %s, %u\n", time, id, str, val);
+		}
 
 		if (debug->log_buff_len == (rear + 1))
 			rear = 0;

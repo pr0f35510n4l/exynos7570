@@ -27,8 +27,15 @@
 #include <linux/list.h>
 #include <linux/dma-mapping.h>
 
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+#include <linux/usblog_proc_notify.h>
+#endif
+
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+#include <linux/usb/composite.h>
+#endif
 #include <linux/usb/samsung_usb.h>
 #include <linux/phy/phy.h>
 
@@ -37,6 +44,45 @@
 #include "otg.h"
 #include "gadget.h"
 #include "io.h"
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+static void dwc3_disconnect_gadget(struct dwc3 *dwc);
+static void dwc3_gadget_cable_connect(struct dwc3 *dwc, bool connect)
+{
+	static bool last_connect;
+	struct usb_composite_dev *cdev;
+	if (last_connect != connect) {
+		if (!connect){
+			cdev = get_gadget_data(&dwc->gadget);
+			if (cdev != NULL) {
+				cdev->mute_switch = 0;
+				cdev->force_disconnect = 1;
+				printk(KERN_DEBUG"Force Disconnect set to 1\n");
+			}
+		}
+		last_connect = connect;
+	}
+}
+#endif
+
+#ifdef CONFIG_ARGOS
+extern int argos_irq_affinity_setup_label(unsigned int irq, const char *label,
+                 struct cpumask *affinity_cpu_mask,
+                 struct cpumask *default_cpu_mask);
+#ifdef CONFIG_SCHED_HMP
+extern struct cpumask hmp_slow_cpu_mask;
+static inline struct cpumask *get_default_cpu_mask(void)
+{
+	return &hmp_slow_cpu_mask;
+}
+#else
+static inline struct cpumask *get_default_cpu_mask(void)
+{
+	return cpu_all_mask;
+}
+#endif
+cpumask_var_t affinity_cpu_mask;
+cpumask_var_t default_cpu_mask;
+#endif
 
 /**
  * ISR for DWC3 gadget was changed because of RNDIS performance.
@@ -351,7 +397,7 @@ int dwc3_send_gadget_ep_cmd(struct dwc3 *dwc, unsigned ep,
 static dma_addr_t dwc3_trb_dma_offset(struct dwc3_ep *dep,
 		struct dwc3_trb *trb)
 {
-	u32		offset = (char *) trb - (char *) dep->trb_pool;
+	size_t		offset = (char *) trb - (char *) dep->trb_pool;	/* prevent CID109377 */
 
 	return dep->trb_pool_dma + offset;
 }
@@ -926,8 +972,18 @@ static void dwc3_prepare_trbs(struct dwc3_ep *dep, bool starting)
 			if (list_is_last(&req->list, &dep->request_list))
 				last_one = 1;
 
-			dwc3_prepare_one_trb(dep, req, dma, length,
-					1, false, 0);
+			/*
+			To improve USB Tethering speed.
+			Last_one set on prepare trb has to set for ncm certification.
+			But It occurs to decrease USB Tethering throughput.
+			So, last_one set is on endpoint out state.
+			*/
+			if(usb_endpoint_dir_in(dep->endpoint.desc))
+				dwc3_prepare_one_trb(dep, req, dma, length,
+						last_one, false, 0);
+			else
+				dwc3_prepare_one_trb(dep, req, dma, length,
+						1, false, 0);
 
 			if (last_one)
 				break;
@@ -1553,6 +1609,8 @@ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on, int suspend)
 	u32			timeout = 500;
 	int			ret = 0;
 
+	printk(KERN_DEBUG"usb: %s is_on:%d\n",__func__, is_on);
+
 	if (is_on) {
 		dwc3_event_buffers_setup(dwc);
 		ret = dwc3_udc_init(dwc);
@@ -1631,6 +1689,9 @@ static int dwc3_gadget_vbus_session(struct usb_gadget *g, int is_active)
 
 	is_active = !!is_active;
 
+	dev_info(dwc->dev, "%s: is_active = %d, softconnect = %d\n",
+			__func__, is_active, dwc->softconnect);
+
 	spin_lock_irqsave(&dwc->lock, flags);
 
 	/* Mark that the vbus was powered */
@@ -1648,6 +1709,12 @@ static int dwc3_gadget_vbus_session(struct usb_gadget *g, int is_active)
 			 */
 			dwc3_gadget_run_stop(dwc, 1, false);
 		} else {
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+			dwc3_disconnect_gadget(dwc);
+			dwc->start_config_issued = false;
+			dwc->gadget.speed = USB_SPEED_UNKNOWN;
+			dwc->setup_packet_pending = false;
+#endif
 			dwc3_gadget_run_stop(dwc, 0, false);
 		}
 	}
@@ -1756,6 +1823,16 @@ static int dwc3_gadget_start(struct usb_gadget *g,
 	dwc->gadget_driver	= driver;
 
 	spin_unlock_irqrestore(&dwc->lock, flags);
+#ifdef CONFIG_ARGOS
+		if (!zalloc_cpumask_var(&affinity_cpu_mask, GFP_KERNEL))
+			return -ENOMEM;
+		if (!zalloc_cpumask_var(&default_cpu_mask, GFP_KERNEL))
+			return -ENOMEM;
+	
+		cpumask_copy(default_cpu_mask, get_default_cpu_mask());
+		cpumask_or(affinity_cpu_mask, affinity_cpu_mask, cpumask_of(1));
+		argos_irq_affinity_setup_label(irq, "USB", affinity_cpu_mask, default_cpu_mask);
+#endif
 
 	return 0;
 
@@ -2044,6 +2121,9 @@ static int dwc3_cleanup_done_reqs(struct dwc3 *dwc, struct dwc3_ep *dep,
 		return 1;
 	}
 
+	if (usb_endpoint_xfer_isoc(dep->endpoint.desc) && (event->status & DEPEVT_STATUS_IOC) &&
+			(trb->ctrl & DWC3_TRB_CTRL_IOC))
+		return 0;
 	return 1;
 }
 
@@ -2529,6 +2609,12 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 		return;
 	}
 
+	printk(KERN_DEBUG"usb: %s speed:%s\n",__func__,		\
+			(dwc->gadget.speed==USB_SPEED_SUPER)?"SS":	\
+			(dwc->gadget.speed==USB_SPEED_HIGH)?"HS":	\
+			(dwc->gadget.speed==USB_SPEED_FULL)?"FS":	\
+			(dwc->gadget.speed==USB_SPEED_LOW)?"LS":"UNKNOWN");
+
 	/*
 	 * Configure PHY via GUSB3PIPECTLn if required.
 	 *
@@ -2708,12 +2794,24 @@ static void dwc3_gadget_interrupt(struct dwc3 *dwc,
 {
 	switch (event->type) {
 	case DWC3_DEVICE_EVENT_DISCONNECT:
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+		dwc3_gadget_cable_connect(dwc,false);
+#endif
+		printk(KERN_DEBUG"usb: %s DISCONNECT \n",__func__);
 		dwc3_gadget_disconnect_interrupt(dwc);
 		break;
 	case DWC3_DEVICE_EVENT_RESET:
+		printk(KERN_DEBUG"usb: %s RESET \n",__func__);
 		dwc3_gadget_reset_interrupt(dwc);
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+		store_usblog_notify(NOTIFY_USBSTATE,
+					(void *)"USB_STATE=RESET", NULL);
+#endif
 		break;
 	case DWC3_DEVICE_EVENT_CONNECT_DONE:
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+		dwc3_gadget_cable_connect(dwc,true);
+#endif
 		dwc3_gadget_conndone_interrupt(dwc);
 		break;
 	case DWC3_DEVICE_EVENT_WAKEUP:
@@ -2918,7 +3016,7 @@ int dwc3_gadget_init(struct dwc3 *dwc)
 	}
 
 	dwc->gadget.ops			= &dwc3_gadget_ops;
-	dwc->gadget.max_speed		= USB_SPEED_SUPER;
+	dwc->gadget.max_speed		= dwc->maximum_speed;
 	dwc->gadget.speed		= USB_SPEED_UNKNOWN;
 	dwc->gadget.sg_supported	= true;
 	dwc->gadget.name		= "dwc3-gadget";
@@ -3066,6 +3164,9 @@ void dwc3_gadget_disconnect_proc(struct dwc3 *dwc)
 {
 	int			reg;
 
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+	dwc3_gadget_cable_connect(dwc,false);
+#endif
 	reg = dwc3_readl(dwc->regs, DWC3_DCTL);
 	reg &= ~DWC3_DCTL_INITU1ENA;
 	dwc3_writel(dwc->regs, DWC3_DCTL, reg);

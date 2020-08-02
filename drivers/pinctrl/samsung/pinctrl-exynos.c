@@ -1624,9 +1624,11 @@ struct samsung_pin_ctrl exynos7570_pin_ctrl[] = {
 		/* pin-controller instance 2 ESE  data */
 		.pin_banks	= exynos7570_pin_banks2,
 		.nr_banks	= ARRAY_SIZE(exynos7570_pin_banks2),
+#ifndef ENABLE_SENSORS_FPRINT_SECURE
 		.eint_gpio_init = exynos_eint_gpio_init,
 		.suspend	= exynos_pinctrl_suspend,
 		.resume		= exynos_pinctrl_resume,
+#endif
 		.label		= "exynos7570-gpio-ctrl2",
 	}, {
 		/* pin-controller instance 3 FSYS data */
@@ -1671,10 +1673,32 @@ struct samsung_pin_ctrl exynos7570_pin_ctrl[] = {
 	},
 };
 
+#ifdef CONFIG_SEC_GPIO_DVS
+int exynos7570_secgpio_get_nr_gpio(void)
+{
+	int i, j;
+	int nr_gpio = 0;
+
+	for (i = 0; i < ARRAY_SIZE(exynos7570_pin_ctrl); i++) {
+		for(j = 0; j < exynos7570_pin_ctrl[i].nr_banks; j++)
+			nr_gpio += exynos7570_pin_ctrl[i].pin_banks[j].nr_pins;
+	}
+
+	return nr_gpio;
+}
+#endif
+
 #if defined(CONFIG_SOC_EXYNOS7570)
 u32 exynos_eint_to_pin_num(int eint)
 {
-	return exynos7570_pin_ctrl[0].base + eint;
+	int i;
+	int etc_offset = 0;
+
+	for(i = 0; i < exynos7570_pin_ctrl[0].nr_banks &&
+		strncmp(exynos7570_pin_ctrl[0].pin_banks[i].name, "gpa", 3); i++)
+		etc_offset += exynos7570_pin_ctrl[0].pin_banks[i].nr_pins;
+	
+        return exynos7570_pin_ctrl[0].base + eint + etc_offset;
 }
 #endif
 

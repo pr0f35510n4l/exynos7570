@@ -62,6 +62,10 @@
 #include "fimc-is-vender-specific.h"
 #include "exynos-fimc-is-module.h"
 
+#if defined(CONFIG_LEDS_KTD2692) && defined(CONFIG_LEDS_SUPPORT_FRONT_FLASH)
+#include <linux/leds-ktd2692.h>
+#endif
+
 /* Default setting values */
 #define DEFAULT_PREVIEW_STILL_WIDTH		(1280) /* sensor margin : 16 */
 #define DEFAULT_PREVIEW_STILL_HEIGHT		(720) /* sensor margin : 12 */
@@ -864,10 +868,12 @@ static int fimc_is_ischain_loadfirm(struct fimc_is_device_ischain *device,
 	fp = filp_open(vender->fw_path, O_RDONLY, 0);
 	if (IS_ERR_OR_NULL(fp)) {
 		fw_load_ret = fimc_is_vender_fw_filp_open(vender, &fp, FIMC_IS_BIN_FW);
-		if(fw_load_ret == FW_SKIP)
+		if(fw_load_ret == FW_SKIP) {
 			goto request_fw;
-		else if(fw_load_ret == FW_FAIL)
+		} else if(fw_load_ret == FW_FAIL) {
+			fw_requested = 0;
 			goto out;
+		}
 	}
 
 	fw_requested = 0;
@@ -1085,10 +1091,12 @@ static int fimc_is_ischain_loadsetf(struct fimc_is_device_ischain *device,
 	fp = filp_open(vender->setfile_path, O_RDONLY, 0);
 	if (IS_ERR_OR_NULL(fp)) {
 		fw_load_ret = fimc_is_vender_fw_filp_open(vender, &fp, FIMC_IS_BIN_SETFILE);
-		if(fw_load_ret == FW_SKIP)
+		if(fw_load_ret == FW_SKIP) {
 			goto request_fw;
-		else if(fw_load_ret == FW_FAIL)
+		} else if(fw_load_ret == FW_FAIL) {
+			fw_requested = 0;
 			goto out;
+		}
 	}
 
 	fw_requested = 0;
@@ -1982,6 +1990,7 @@ int fimc_is_itf_grp_shot(struct fimc_is_device_ischain *device,
 	struct fimc_is_frame *frame)
 {
 	int ret = 0;
+	int i;
 #ifdef CONFIG_USE_SENSOR_GROUP
 	unsigned long flags;
 	struct fimc_is_group *head;
@@ -1992,10 +2001,8 @@ int fimc_is_itf_grp_shot(struct fimc_is_device_ischain *device,
 	BUG_ON(!frame);
 	BUG_ON(!frame->shot);
 
-	frame->shot->uctl.scalerUd.sourceAddress[0] = frame->dvaddr_buffer[0];
-	frame->shot->uctl.scalerUd.sourceAddress[1] = frame->dvaddr_buffer[1];
-	frame->shot->uctl.scalerUd.sourceAddress[2] = frame->dvaddr_buffer[2];
-	frame->shot->uctl.scalerUd.sourceAddress[3] = frame->dvaddr_buffer[3];
+	for (i = 0; i < frame->planes; i++)
+		frame->shot->uctl.scalerUd.sourceAddress[i] = frame->dvaddr_buffer[i];
 
 	/* Cache Flush */
 	fimc_is_ischain_meta_flush(frame);
@@ -2071,7 +2078,7 @@ int fimc_is_ischain_runtime_suspend(struct device *dev)
 	CALL_MEMOP(mem, suspend, mem->default_ctx);
 
 #if defined(CONFIG_FIMC_IS_BUS_DEVFREQ) && defined(CONFIG_EXYNOS_BTS)
-#if defined(CONFIG_EXYNOS7870_BTS) || defined(CONFIG_EXYNOS7880_BTS)
+#if defined(CONFIG_EXYNOS7870_BTS) || defined(CONFIG_EXYNOS7880_BTS) || defined(CONFIG_EXYNOS7570_BTS)
 	exynos_update_media_scenario(TYPE_CAM, false, 0);
 #else
 	exynos7_update_media_scenario(TYPE_CAM, false, 0);
@@ -2108,6 +2115,10 @@ int fimc_is_ischain_runtime_suspend(struct device *dev)
 #endif
 #if !defined(ENABLE_IS_CORE)
 	fimc_is_hardware_runtime_suspend(&core->hardware);
+#endif
+#ifdef USE_CAMERA_HW_BIG_DATA
+	if (fimc_is_sec_need_update_to_file())
+		fimc_is_sec_copy_err_cnt_to_file();
 #endif
 	info("FIMC_IS runtime suspend out\n");
 	return 0;
@@ -2179,7 +2190,7 @@ int fimc_is_ischain_runtime_resume(struct device *dev)
 	CALL_MEMOP(mem, resume, mem->default_ctx);
 
 #if defined(CONFIG_FIMC_IS_BUS_DEVFREQ) && defined(CONFIG_EXYNOS_BTS)
-#if defined(CONFIG_EXYNOS7870_BTS) || defined(CONFIG_EXYNOS7880_BTS)
+#if defined(CONFIG_EXYNOS7870_BTS) || defined(CONFIG_EXYNOS7880_BTS) || defined(CONFIG_EXYNOS7570_BTS)
 	exynos_update_media_scenario(TYPE_CAM, true, 0);
 #else
 	exynos7_update_media_scenario(TYPE_CAM, true, 0);
@@ -2207,6 +2218,9 @@ int fimc_is_ischain_power(struct fimc_is_device_ischain *device, int on)
 	struct fimc_is_core *core;
 	struct fimc_is_vender *vender;
 	struct fimc_is_interface *itf;
+#ifdef CONFIG_VENDER_MCD
+	struct fimc_is_vender_specific *specific;
+#endif
 
 	BUG_ON(!device);
 	BUG_ON(!device->interface);
@@ -2215,6 +2229,9 @@ int fimc_is_ischain_power(struct fimc_is_device_ischain *device, int on)
 	core = (struct fimc_is_core *)platform_get_drvdata(device->pdev);
 	vender = &core->vender;
 	itf = device->interface;
+#ifdef CONFIG_VENDER_MCD
+	specific = core->vender.private_data;
+#endif
 
 	if (on) {
 		/* runtime suspend callback can be called lately because of power relationship */
@@ -2246,7 +2263,11 @@ int fimc_is_ischain_power(struct fimc_is_device_ischain *device, int on)
 			goto p_err;
 		}
 
-		if (core->current_position == SENSOR_POSITION_FRONT) {
+		if (core->current_position == SENSOR_POSITION_FRONT
+#ifdef CONFIG_VENDER_MCD
+		|| specific->suspend_resume_disable
+#endif
+		) {
 			fimc_is_itf_fwboot_init(itf);
 		}
 
@@ -2306,6 +2327,11 @@ int fimc_is_ischain_power(struct fimc_is_device_ischain *device, int on)
 			err("fimc_is_ischain_runtime_resume_post is fail(%d)", ret);
 			goto p_err;
 		}
+
+#ifdef CONFIG_VENDER_MCD
+		if (specific->need_cold_reset)
+			specific->need_cold_reset = false;
+#endif
 
 		set_bit(FIMC_IS_ISCHAIN_POWER_ON, &device->state);
 	} else {
@@ -2423,6 +2449,9 @@ int fimc_is_ischain_power(struct fimc_is_device_ischain *device, int on)
 		if (ret)
 			err("fimc_is_runtime_suspend_post is fail(%d)", ret);
 
+#if defined(CONFIG_LEDS_KTD2692) && defined(CONFIG_LEDS_SUPPORT_FRONT_FLASH)
+		ktd2692_led_mode_ctrl(1);		// Front LED Flash OFF
+#endif
 		clear_bit(FIMC_IS_ISCHAIN_POWER_ON, &device->state);
 	}
 
@@ -2562,6 +2591,7 @@ int fimc_is_ischain_buf_tag(struct fimc_is_device_ischain *device,
 	u32 target_addr[])
 {
 	int ret = 0;
+	int i, j;
 	unsigned long flags;
 	struct fimc_is_framemgr *framemgr;
 	struct fimc_is_frame *frame;
@@ -2585,33 +2615,46 @@ int fimc_is_ischain_buf_tag(struct fimc_is_device_ischain *device,
 		case V4L2_PIX_FMT_NV12:
 		case V4L2_PIX_FMT_NV16:
 		case V4L2_PIX_FMT_NV61:
-			target_addr[0] = frame->dvaddr_buffer[0];
-			target_addr[1] = target_addr[0] + (width * height);
+			for (i = 0; i < frame->planes; i++) {
+				j = i * 2;
+				target_addr[j] = frame->dvaddr_buffer[i];
+				target_addr[j + 1] = target_addr[j] + (width * height);
+			}
 			break;
 		case V4L2_PIX_FMT_YVU420M:
-			target_addr[0] = frame->dvaddr_buffer[0];
-			target_addr[1] = frame->dvaddr_buffer[2];
-			target_addr[2] = frame->dvaddr_buffer[1];
+			for (i = 0; i < frame->planes; i += 3) {
+				target_addr[i] = frame->dvaddr_buffer[i];
+				target_addr[i + 1] = frame->dvaddr_buffer[i + 2];
+				target_addr[i + 2] = frame->dvaddr_buffer[i + 1];
+			}
 			break;
 		case V4L2_PIX_FMT_YUV420:
-			target_addr[0] = frame->dvaddr_buffer[0];
-			target_addr[1] = target_addr[0] + (width * height);
-			target_addr[2] = target_addr[1] + (width * height / 4);
+			for (i = 0; i < frame->planes; i++) {
+				j = i * 3;
+				target_addr[j] = frame->dvaddr_buffer[i];
+				target_addr[j + 1] = target_addr[j] + (width * height);
+				target_addr[j + 2] = target_addr[j + 1] + (width * height / 4);
+			}
 			break;
 		case V4L2_PIX_FMT_YVU420: /* AYV12 spec: The width should be aligned by 16 pixel. */
-			target_addr[0] = frame->dvaddr_buffer[0];
-			target_addr[2] = target_addr[0] + (ALIGN(width, 16) * height);
-			target_addr[1] = target_addr[2] + (ALIGN(width / 2, 16) * height / 2);
+			for (i = 0; i < frame->planes; i++) {
+				j = i * 3;
+				target_addr[j] = frame->dvaddr_buffer[i];
+				target_addr[j + 2] = target_addr[j] + (ALIGN(width, 16) * height);
+				target_addr[j + 1] = target_addr[j + 2] + (ALIGN(width / 2, 16) * height / 2);
+			}
 			break;
 		case V4L2_PIX_FMT_YUV422P:
-			target_addr[0] = frame->dvaddr_buffer[0];
-			target_addr[1] = target_addr[0] + (width * height);
-			target_addr[2] = target_addr[1] + (width * height / 2);
+			for (i = 0; i < frame->planes; i++) {
+				j = i * 3;
+				target_addr[j] = frame->dvaddr_buffer[i];
+				target_addr[j + 1] = target_addr[j] + (width * height);
+				target_addr[j + 2] = target_addr[j + 1] + (width * height / 2);
+			}
 			break;
 		default:
-			target_addr[0] = frame->dvaddr_buffer[0];
-			target_addr[1] = frame->dvaddr_buffer[1];
-			target_addr[2] = frame->dvaddr_buffer[2];
+			for (i = 0; i < frame->planes; i++)
+				target_addr[i] = frame->dvaddr_buffer[i];
 			break;
 		}
 
@@ -2621,9 +2664,9 @@ int fimc_is_ischain_buf_tag(struct fimc_is_device_ischain *device,
 		set_bit(subdev->id, &ldr_frame->out_flag);
 		trans_frame(framemgr, frame, FS_PROCESS);
 	} else {
-		target_addr[0] = 0;
-		target_addr[1] = 0;
-		target_addr[2] = 0;
+		for (i = 0; i < FIMC_IS_MAX_TARGET_ADDR; i++)
+			target_addr[i] = 0;
+
 		ret = -EINVAL;
 	}
 

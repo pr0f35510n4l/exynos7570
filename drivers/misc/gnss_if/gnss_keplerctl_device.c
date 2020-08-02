@@ -246,7 +246,7 @@ static int kepler_req_fault_info(struct gnss_ctl *gc, u32 **fault_info_regs)
 	struct gnss_data *pdata;
 	struct gnss_mbox *mbx;
 	unsigned long timeout = msecs_to_jiffies(1000);
-	u32 size;
+	u32 size = 0;
 
 	if (!fault_info_regs) {
 		gif_err("Cannot access fault_info_regs!\n");

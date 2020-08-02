@@ -108,7 +108,6 @@
 #include <linux/dvb/dmx.h>
 #include <linux/dvb/frontend.h>
 #include <linux/dvb/video.h>
-#include <linux/nfc/sec_nfc.h>
 
 #include <linux/sort.h>
 
@@ -1401,13 +1400,6 @@ COMPATIBLE_IOCTL(TIOCSLTC)
  */
 COMPATIBLE_IOCTL(TIOCSTART)
 COMPATIBLE_IOCTL(TIOCSTOP)
-#endif
-
-#ifdef CONFIG_SEC_NFC
-COMPATIBLE_IOCTL(SEC_NFC_GET_MODE)
-COMPATIBLE_IOCTL(SEC_NFC_SET_MODE)
-COMPATIBLE_IOCTL(SEC_NFC_SLEEP)
-COMPATIBLE_IOCTL(SEC_NFC_WAKEUP)
 #endif
 
 /* fat 'r' ioctls. These are handled by fat with ->compat_ioctl,

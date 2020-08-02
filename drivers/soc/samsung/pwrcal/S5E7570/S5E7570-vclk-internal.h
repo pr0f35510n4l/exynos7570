@@ -127,5 +127,6 @@ DFS_EXTERN(dvfs_mif)
 DFS_EXTERN(dvfs_int)
 DFS_EXTERN(dvfs_disp)
 DFS_EXTERN(dvfs_cam)
+DFS_EXTERN(dvs_cp)
 
 #endif

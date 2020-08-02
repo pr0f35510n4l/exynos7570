@@ -22,6 +22,7 @@ enum dvfs_id {
 	cal_asv_dvfs_int,
 	cal_asv_dvfs_cam,
 	cal_asv_dvfs_disp,
+	cal_asv_dvs_cp,
 	num_of_dvfs,
 };
 
@@ -107,6 +108,8 @@ struct asv_tbl_info {
 	unsigned long long reserved_84:64;
 	unsigned long long reserved_85:64;
 	unsigned reserved_9:32;
+	unsigned reserved_10:29;
+	unsigned cp_cpu_freq:3;
 };
 #define ASV_INFO_ADDR_BASE	(0x100D9000)
 #define ASV_INFO_ADDR_CNT	(sizeof(struct asv_tbl_info) / 4)
@@ -119,6 +122,7 @@ static struct asv_table_list *pwrcal_mif_asv_table;
 static struct asv_table_list *pwrcal_int_asv_table;
 static struct asv_table_list *pwrcal_disp_asv_table;
 static struct asv_table_list *pwrcal_cam_asv_table;
+static struct asv_table_list *pwrcal_cp_asv_table;
 
 static struct asv_table_list *pwrcal_cpucl0_rcc_table;
 static struct asv_table_list *pwrcal_g3d_rcc_table;
@@ -130,6 +134,7 @@ static struct pwrcal_vclk_dfs *asv_dvfs_mif;
 static struct pwrcal_vclk_dfs *asv_dvfs_int;
 static struct pwrcal_vclk_dfs *asv_dvfs_disp;
 static struct pwrcal_vclk_dfs *asv_dvfs_cam;
+static struct pwrcal_vclk_dfs *asv_dvs_cp;
 
 static unsigned int cpucl0_subgrp_index = 256;
 static unsigned int g3d_subgrp_index = 256;
@@ -450,6 +455,7 @@ static void asv_get_asvinfo(void)
 		asv_tbl_info.g3d_emaw = 0;
 
 		asv_tbl_info.cp_ema = 0;
+		asv_tbl_info.cp_cpu_freq = 0;
 
 	}
 	asv_set_freq_limit();
@@ -485,6 +491,10 @@ static int get_asv_group(enum dvfs_id domain, unsigned int lv)
 	case cal_asv_dvfs_disp:
 		asv = asv_tbl_info.disp_asv_group;
 		mod = asv_tbl_info.disp_modified_group;
+		break;
+	case cal_asv_dvs_cp:
+		asv = asv_tbl_info.cp_asv_group;
+		mod = asv_tbl_info.cp_modified_group;
 		break;
 	default:
 		BUG();	/* Never reach */
@@ -581,6 +591,10 @@ static unsigned int get_asv_voltage(enum dvfs_id domain, unsigned int lv)
 		ssa0_offset = disp_ssa0_offset;
 		ssa1_table = disp_ssa1_table;
 		table = pwrcal_disp_asv_table[asv_tbl_info.asv_table_ver].table[lv].voltage;
+		break;
+	case cal_asv_dvs_cp:
+		asv = get_asv_group(cal_asv_dvs_cp, lv);
+		table = pwrcal_cp_asv_table[asv_tbl_info.asv_table_ver].table[lv].voltage;
 		break;
 	default:
 		BUG();	/* Never reach */
@@ -721,6 +735,18 @@ static int dvfscam_get_asv_table(unsigned int *table)
 	return max_lv;
 }
 
+static int dvscp_get_asv_table(unsigned int *table)
+{
+	int lv, max_lv;
+
+	max_lv = asv_dvs_cp->table->num_of_lv;
+
+	for (lv = 0; lv < max_lv; lv++)
+		table[lv] = get_asv_voltage(cal_asv_dvs_cp, lv);
+
+	return max_lv;
+}
+
 static int asv_rcc_set_table(void)
 {
 	return 0;
@@ -836,6 +862,7 @@ static void asv_voltage_table_init(void)
 	asv_voltage_init_table(&pwrcal_int_asv_table, asv_dvfs_int);
 	asv_voltage_init_table(&pwrcal_cam_asv_table, asv_dvfs_cam);
 	asv_voltage_init_table(&pwrcal_disp_asv_table, asv_dvfs_disp);
+	asv_voltage_init_table(&pwrcal_cp_asv_table, asv_dvs_cp);
 }
 
 static void asv_rcc_table_init(void)
@@ -943,6 +970,10 @@ int cal_asv_init(void)
 	vclk = cal_get_vclk(dvfs_cam);
 	asv_dvfs_cam = to_dfs(vclk);
 	asv_dvfs_cam->dfsops->get_asv_table = dvfscam_get_asv_table;
+	
+	vclk = cal_get_vclk(dvs_cp);
+	asv_dvs_cp = to_dfs(vclk);
+	asv_dvs_cp->dfsops->get_asv_table = dvscp_get_asv_table;
 
 	pwrcal_cpucl0_asv_table = NULL;
 	pwrcal_g3d_asv_table = NULL;
@@ -950,6 +981,7 @@ int cal_asv_init(void)
 	pwrcal_int_asv_table = NULL;
 	pwrcal_disp_asv_table = NULL;
 	pwrcal_cam_asv_table = NULL;
+	pwrcal_cp_asv_table = NULL;
 
 	pwrcal_cpucl0_rcc_table = NULL;
 	pwrcal_g3d_rcc_table = NULL;
@@ -992,6 +1024,11 @@ static int asv_get_tablever(void)
 	return (int)(asv_tbl_info.asv_table_ver);
 }
 
+static int asv_get_cp_cpu_freq(void)
+{
+	return (int)(asv_tbl_info.cp_cpu_freq);
+}
+
 static int asv_get_ids_info(unsigned int domain)
 {
 #ifdef PWRCAL_TARGET_LINUX
@@ -1019,6 +1056,40 @@ static int asv_get_ids_info(unsigned int domain)
 #endif
 }
 
+#if defined(CONFIG_SEC_DEBUG)
+enum ids_info
+{
+	table_ver,
+	big_asv,
+	g3d_asv,
+	cpu_ids,
+};
+
+int asv_ids_information(enum ids_info id)
+{
+	int res = 0; 
+     
+	switch (id) {
+		case table_ver:
+			res = asv_tbl_info.asv_table_ver;
+			break;
+		case big_asv:
+			res = asv_tbl_info.cpucl0_asv_group;
+			break;
+                case g3d_asv:
+			res = asv_tbl_info.g3d_asv_group;
+			break;
+		case cpu_ids:
+			res = asv_get_ids_info(0);
+			break;
+		default:
+			break;
+	};
+
+	return res;
+}
+#endif /* CONFIG_SEC_DEBUG */
+
 struct cal_asv_ops cal_asv_ops = {
 	.print_asv_info = asv_print_info,
 	.print_rcc_info = rcc_print_info,
@@ -1031,4 +1102,5 @@ struct cal_asv_ops cal_asv_ops = {
 	.get_ids_info = asv_get_ids_info,
 	.set_ssa0 = asv_set_ssa0,
 	.set_ssa1 = asv_set_ssa1,
+	.get_cp_cpu_freq = asv_get_cp_cpu_freq,
 };

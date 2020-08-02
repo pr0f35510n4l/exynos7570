@@ -5,10 +5,6 @@
 #include <linux/delay.h>
 #include <linux/timer.h>
 #include <linux/slab.h>
-/*
-#include "hal_macros.h"
-#include "io_map.h"
-*/
 
 /******************************************************************************
  *	definition
@@ -96,6 +92,7 @@ void fm_set_rssi_thresh(struct s610_radio *radio,
 	fm_tuner_state state);
 static void fm_tuner_control_mute(struct s610_radio *radio);
 void fm_tuner_set_force_mute(struct s610_radio *radio, bool mute);
+void fm_tuner_set_mute_audio(struct s610_radio *radio, bool mute);
 #ifdef MONO_SWITCH_INTERF
 void fm_check_interferer(struct s610_radio *radio);
 void fm_reset_force_mono_interf(struct s610_radio *radio);
@@ -122,6 +119,7 @@ void fm_tuner_rds_off(struct s610_radio *radio);
 bool fm_tuner_set_power_state(struct s610_radio *radio,
 		bool fm_on, bool rds_on);
 int init_low_struc(struct s610_radio *radio);
+void fm_iclkaux_set(u32 data);
 
 #ifdef	ENABLE_RDS_WORK_QUEUE
 void s610_rds_work(struct work_struct *work);
@@ -132,6 +130,10 @@ void s610_if_work(struct work_struct *work);
 
 void s610_sig2_work(struct work_struct *work);
 void s610_tune_work(struct work_struct *work);
+
+#ifdef VOLUME_CTRL_S610
+void fm_set_audio_gain(struct s610_radio *radio, u16 gain);
+#endif /*VOLUME_CTRL_S610*/
 
 extern void fmspeedy_wakeup(void);
 extern void fm_pwron(void);
@@ -147,7 +149,7 @@ extern void fm_audio_control(struct s610_radio *radio,
 	bool audio_out, bool lr_switch,
 	u32 req_time, u32 audio_addr);
 extern bool fm_read_rds_data(struct s610_radio *radio,
-	u16 *buffer, u16 *size, u16 *blocks);
+	u8 *buffer, u16 *size, u16 *blocks);
 extern void fm_process_rds_data(struct s610_radio *radio);
 extern int read_fm_speedy_m(struct s610_radio *radio);
 #endif	/*FM_LOW_REF_H*/

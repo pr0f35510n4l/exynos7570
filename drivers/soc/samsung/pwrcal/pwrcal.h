@@ -88,6 +88,8 @@ extern int is_sicd_factory(void);
 /* It is for debugging. */
 extern void cal_vclk_dbg_info(unsigned int id);
 
+extern int cal_get_cp_cpu_freq(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -47,6 +47,8 @@ EXPORT_SYMBOL(expander_power_keystate);
 struct device *sec_power_key;
 EXPORT_SYMBOL(sec_power_key);
 
+static struct power_keys_drvdata *static_keys_info;
+
 struct power_button_data {
 	struct power_keys_button *button;
 	struct input_dev *input;
@@ -75,6 +77,20 @@ struct power_keys_drvdata {
 
 	struct power_button_data button_data[0];
 };
+
+bool s2mpu06_is_pwron(void)
+{
+	u8 val;
+	int ret;
+
+	ret = s2mpu06_read_reg_non_mutex(static_keys_info->pmm_i2c, S2MPU06_PMIC_REG_STATUS1, &val);
+	if (ret < 0) {
+		dev_err(static_keys_info->dev, "%s: fail to read status1 reg(%d)\n", __func__, ret);
+		return false;
+	}
+	return (val & BIT(0));
+}
+EXPORT_SYMBOL_GPL(s2mpu06_is_pwron);
 
 /*
  * SYSFS interface for enabling/disabling keys and switches:
@@ -460,8 +476,6 @@ static void power_keys_power_report_event(struct power_button_data *bdata)
 		printk(KERN_INFO "HOME key is pressed\n");
 	}
 
-	exynos_ss_check_crash_key(button->code, state);
-
 	if (type == EV_ABS) {
 		if (state)
 			input_event(input, type, button->code, button->value);
@@ -500,11 +514,18 @@ static void power_keys_report_state(struct power_keys_drvdata *ddata)
 {
 	struct input_dev *input = ddata->input;
 	int i;
+	u8 temp;
 
 	for (i = 0; i < ddata->pdata->nbuttons; i++) {
 		struct power_button_data *bdata = &ddata->button_data[i];
 		/* TO DO: read status directly */
-		bdata->key_pressed = 0;
+		s2mpu06_read_reg(ddata->pmm_i2c, S2MPU06_PMIC_REG_STATUS1, &temp);
+		pr_info("%s %2x", __func__, temp);
+		if (temp & 0x01)
+			bdata->key_pressed = 1;
+		else
+			bdata->key_pressed = 0;
+
 		power_keys_power_report_event(bdata);
 	}
 	input_sync(input);
@@ -653,7 +674,7 @@ static int power_keys_probe(struct platform_device *pdev)
 	struct power_keys_platform_data *pdata = dev_get_platdata(dev);
 	struct power_keys_drvdata *ddata;
 	struct input_dev *input;
-	int i, ret;
+	int i, ret = 0;
 	int wakeup = 0;
 
 	if (!pdata) {
@@ -685,12 +706,14 @@ static int power_keys_probe(struct platform_device *pdev)
 			GFP_KERNEL);
 	if (!ddata) {
 		dev_err(dev, "failed to allocate ddata.\n");
-		goto fail1;
+		goto fail2;
 	}
 	ddata->dev	= dev;
 	ddata->pdata	= pdata;
 	ddata->input	= input;
 	ddata->pmm_i2c	= s2mpu06->pmic;
+	
+	static_keys_info = ddata;
 
 	mutex_init(&ddata->disable_lock);
 
@@ -725,7 +748,7 @@ static int power_keys_probe(struct platform_device *pdev)
 	if(ret < 0) {
 		dev_err(dev, "%s() fail to request pwron-r in IRQ: %d: %d\n",
 				__func__, ddata->irq_pwronr, ret);
-		goto fail1;
+		goto fail3;
 	}
 
 	ret = request_any_context_irq(ddata->irq_pwronf,
@@ -733,14 +756,14 @@ static int power_keys_probe(struct platform_device *pdev)
 	if(ret < 0) {
 		dev_err(dev, "%s() fail to request pwron-f in IRQ: %d: %d\n",
 				__func__, ddata->irq_pwronf, ret);
-		goto fail1;
+		goto fail3;
 	}
 
 	ret = sysfs_create_group(&dev->kobj, &power_keys_attr_group);
 	if (ret) {
 		dev_err(dev, "Unable to export keys/switches, ret: %d\n",
 			ret);
-		goto fail2;
+		goto fail4;
 	}
 
 #ifdef CONFIG_SEC_SYSFS
@@ -752,14 +775,14 @@ static int power_keys_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(dev, "Unable to export keys/switches, error: %d\n",
 			ret);
-		goto fail2;
+		goto fail5;
 	}
 #endif
 	ret = input_register_device(input);
 	if (ret) {
 		dev_err(dev, "Unable to register input device, error: %d\n",
 			ret);
-		goto fail3;
+		goto fail6;
 	}
 
 	device_init_wakeup(dev, wakeup);
@@ -768,9 +791,14 @@ static int power_keys_probe(struct platform_device *pdev)
 
 	return 0;
 
- fail3:
+ fail6:
+#ifdef CONFIG_SEC_SYSFS
+	sysfs_remove_group(&sec_power_key->kobj, &sec_power_key_attr_group);
+	sec_device_destroy(sec_power_key->devt);
+ fail5:
+#endif
 	sysfs_remove_group(&dev->kobj, &power_keys_attr_group);
- fail2:
+ fail4:
 	while (--i >= 0) {
 		struct power_button_data *bdata = &ddata->button_data[i];
 
@@ -781,10 +809,12 @@ static int power_keys_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, NULL);
- fail1:
+ fail3:
 	wake_lock_destroy(&ddata->key_wake_lock);
-	input_free_device(input);
 	kfree(ddata);
+ fail2:
+	input_free_device(input);
+ fail1:
 	/* If we have no platform data, we allocated pdata dynamically. */
 	if (!dev_get_platdata(dev))
 		kfree(pdata);

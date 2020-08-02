@@ -28,6 +28,7 @@
 #include <soc/samsung/exynos-powermode.h>
 
 #include "pwrcal/pwrcal.h"
+#include <trace/events/exynos.h>
 
 #define NUM_WAKEUP_MASK		3
 
@@ -516,6 +517,7 @@ int enter_c2(unsigned int cpu, int index)
 		powermode_info->sicd_entered = SYS_SICD;
 
 		exynos_ss_cpuidle(EXYNOS_SS_SICD_INDEX, 0, 0, ESS_FLAG_IN);
+		trace_exynos_cpuidle_in(EXYNOS_SS_SICD_INDEX);
 	}
 out:
 	spin_unlock(&c2_lock);
@@ -548,6 +550,7 @@ void wakeup_from_c2(unsigned int cpu, int early_wakeup)
 		powermode_info->sicd_entered = -1;
 
 		exynos_ss_cpuidle(EXYNOS_SS_SICD_INDEX, 0, 0, ESS_FLAG_OUT);
+		trace_exynos_cpuidle_out(EXYNOS_SS_SICD_INDEX);
 	}
 
 	update_c2_state(false, cpu);

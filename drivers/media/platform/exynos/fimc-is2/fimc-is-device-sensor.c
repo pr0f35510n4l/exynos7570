@@ -476,37 +476,18 @@ int fimc_is_sensor_gpio_on(struct fimc_is_device_sensor *device)
 			goto p_err;
 		}
 
-#ifdef ENABLE_SOC_CAMERA
-		if (scenario == SENSOR_SCENARIO_EXTERNAL) { /* i2c client */
-			if (!pdata->gpio_soc_cfg) {
-				clear_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_soc_cfg is NULL", device);
-				ret = -EINVAL;
-				goto p_err;
-			}
+		if (!pdata->gpio_cfg) {
+			clear_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
+			merr("gpio_cfg is NULL", device);
+			ret = -EINVAL;
+			goto p_err;
+		}
 
-			ret = pdata->gpio_soc_cfg(module->client, scenario, gpio_scenario);
-			if (ret) {
-				clear_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_soc_cfg is fail(%d)", device, ret);
-				goto p_err;
-			}
-		} else
-#endif
-		{
-			if (!pdata->gpio_cfg) {
-				clear_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_cfg is NULL", device);
-				ret = -EINVAL;
-				goto p_err;
-			}
-
-			ret = pdata->gpio_cfg(module, scenario, gpio_scenario);
-			if (ret) {
-				clear_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_cfg is fail(%d)", device, ret);
-				goto p_err;
-			}
+		ret = pdata->gpio_cfg(module, scenario, gpio_scenario);
+		if (ret) {
+			clear_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
+			merr("gpio_cfg is fail(%d)", device, ret);
+			goto p_err;
 		}
 
 		ret = fimc_is_vender_sensor_gpio_on(vender, scenario, gpio_scenario);
@@ -585,38 +566,18 @@ int fimc_is_sensor_gpio_off(struct fimc_is_device_sensor *device)
 			goto p_err;
 		}
 
-#ifdef ENABLE_SOC_CAMERA
-		/* i2c client */
-		if (scenario == SENSOR_SCENARIO_EXTERNAL) {
-			if (!pdata->gpio_soc_cfg) {
-				set_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_soc_cfg is NULL", device);
-				ret = -EINVAL;
-				goto p_err;
-			}
+		if (!pdata->gpio_cfg) {
+			set_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
+			merr("gpio_cfg is NULL", device);
+			ret = -EINVAL;
+			goto p_err;
+		}
 
-			ret = pdata->gpio_soc_cfg(module->client, scenario, gpio_scenario);
-			if (ret) {
-				set_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_soc_cfg is fail(%d)", device, ret);
-				goto p_err;
-			}
-		} else
-#endif
-		{
-			if (!pdata->gpio_cfg) {
-				set_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_cfg is NULL", device);
-				ret = -EINVAL;
-				goto p_err;
-			}
-
-			ret = pdata->gpio_cfg(module, scenario, gpio_scenario);
-			if (ret) {
-				set_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
-				merr("gpio_cfg is fail(%d)", device, ret);
-				goto p_err;
-			}
+		ret = pdata->gpio_cfg(module, scenario, gpio_scenario);
+		if (ret) {
+			set_bit(FIMC_IS_MODULE_GPIO_ON, &module->state);
+			merr("gpio_cfg is fail(%d)", device, ret);
+			goto p_err;
 		}
 
 		ret = fimc_is_vender_sensor_gpio_off(vender, scenario, gpio_scenario);
@@ -969,7 +930,6 @@ static int fimc_is_sensor_notify_by_fstr(struct fimc_is_device_sensor *device, v
 	framemgr_e_barrier(framemgr, FMGR_IDX_28);
 
 	frame = peek_frame(framemgr, FS_PROCESS);
-
 	if (frame) {
 #ifdef MEASURE_TIME
 #ifdef EXTERNAL_TIME
@@ -977,10 +937,9 @@ static int fimc_is_sensor_notify_by_fstr(struct fimc_is_device_sensor *device, v
 #endif
 #endif
 		frame->fcount = device->fcount;
-#ifndef ENABLE_SOC_CAMERA
 		fimc_is_sensor_dm_tag(device, frame);
-#endif
 	}
+
 #ifdef TASKLET_MSG
 	if (!frame) {
 		merr("[SEN] process is empty", device);
@@ -1197,9 +1156,6 @@ static int fimc_is_sensor_probe(struct platform_device *pdev)
 	void *pdata;
 
 	BUG_ON(!pdev);
-
-
-	probe_info("%s:start..==================\n", __func__);
 
 	if (fimc_is_dev == NULL) {
 		warn("fimc_is_dev is not yet probed(sensor)");
@@ -1491,7 +1447,7 @@ int fimc_is_sensor_close(struct fimc_is_device_sensor *device)
 	cancel_work_sync(&device->control_work);
 	cancel_work_sync(&device->instant_work);
 
-#if !defined( ENABLE_IS_CORE ) && !defined(ENABLE_SOC_CAMERA)
+#ifndef ENABLE_IS_CORE
 	if (device->subdev_module) {
 		ret = v4l2_subdev_call(device->subdev_module, core, ioctl, V4L2_CID_SENSOR_DEINIT, device);
 		if (ret)
@@ -2302,17 +2258,14 @@ int fimc_is_sensor_buffer_finish(struct fimc_is_device_sensor *device,
 	framemgr_e_barrier_irqs(framemgr, FMGR_IDX_3, flags);
 
 	if (frame->state == FS_COMPLETE) {
-#ifndef ENABLE_SOC_CAMERA
 		if (!frame->shot->dm.request.frameCount)
 			err("request.frameCount is 0\n");
-#endif
 		trans_frame(framemgr, frame, FS_FREE);
-#ifndef ENABLE_SOC_CAMERA
+
 		frame->shot_ext->free_cnt = framemgr->queued_count[FS_FREE];
 		frame->shot_ext->request_cnt = framemgr->queued_count[FS_REQUEST];
 		frame->shot_ext->process_cnt = framemgr->queued_count[FS_PROCESS];
 		frame->shot_ext->complete_cnt = framemgr->queued_count[FS_COMPLETE];
-#endif
 	} else {
 		err("frame(%d) is not com state(%d)", index, frame->state);
 		frame_manager_print_queues(framemgr);
@@ -2458,7 +2411,7 @@ int fimc_is_sensor_front_start(struct fimc_is_device_sensor *device,
 		goto p_err;
 	}
 
-#if !defined( ENABLE_IS_CORE ) && !defined(ENABLE_SOC_CAMERA)
+#ifndef ENABLE_IS_CORE
 	/* Actuator Init because actuator init use cal data */
 	ret = v4l2_subdev_call(device->subdev_module, core, ioctl, V4L2_CID_SENSOR_NOTIFY_ACTUATOR_INIT, 0);
 	if (ret)

@@ -421,6 +421,12 @@ int fimc_is_sensor_init_mode_change_thread(struct fimc_is_device_sensor_peri *se
 
 	init_kthread_worker(&sensor_peri->mode_change_worker);
 	sensor_peri->mode_change_task = kthread_run(kthread_worker_fn, &sensor_peri->mode_change_worker, "fimc_is_sensor_mode_change");
+	if (IS_ERR_OR_NULL(sensor_peri->mode_change_task)) {
+		err("failed to create kthread");
+		sensor_peri->mode_change_task = NULL;
+		return -EFAULT;
+	}
+
 	ret = sched_setscheduler_nocheck(sensor_peri->mode_change_task, SCHED_FIFO, &param);
 	if (ret) {
 		err("sched_setscheduler_nocheck is fail(%d)\n", ret);
@@ -494,22 +500,23 @@ void fimc_is_sensor_mode_change_work_fn(struct kthread_work *work)
 
 	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
 
-#ifdef CONFIG_SENSOR_RETENTION_USE
+#if defined(CONFIG_SENSOR_RETENTION_USE)
 	module = sensor_peri->module;
 
 	/* retention mode crc check */
-	if (test_bit(FIMC_IS_MODULE_STANDBY_ON, &module->state))
+	if (test_bit(FIMC_IS_MODULE_STANDBY_ON, &module->state)) {
 		CALL_CISOPS(cis, cis_retention_crc_check, cis->subdev);
-#endif
+	} else {
+		/* retention mode sram write global setting */
+		CALL_CISOPS(cis, cis_set_global_setting, cis->subdev);
 
+		/* retention mode sram write mode setting */
+		CALL_CISOPS(cis, cis_retention_prepare, cis->subdev);
+	}
+#else
 	/* cis global setting is only set to first mode change time */
 	if (sensor_peri->mode_change_first == true)
 		CALL_CISOPS(cis, cis_set_global_setting, cis->subdev);
-
-#ifdef CONFIG_SENSOR_RETENTION_USE
-	/* retention mode sram write */
-	if (!test_bit(FIMC_IS_MODULE_STANDBY_ON, &module->state))
-		CALL_CISOPS(cis, cis_retention_prepare, cis->subdev);
 #endif
 
 	CALL_CISOPS(cis, cis_mode_change, cis->subdev, cis->cis_data->sens_config_index_cur);
@@ -527,6 +534,7 @@ int fimc_is_sensor_mode_change(struct fimc_is_cis *cis, u32 mode)
 
 	sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
 
+	CALL_CISOPS(cis, cis_data_calculation, cis->subdev, cis->cis_data->sens_config_index_cur);
 	queue_kthread_work(&sensor_peri->mode_change_worker, &sensor_peri->mode_change_work);
 
 	return ret;
@@ -1212,6 +1220,7 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 					bool on)
 {
 	int ret = 0;
+	int i = 0;
 	struct v4l2_subdev *subdev_module;
 	struct fimc_is_module_enum *module;
 	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
@@ -1340,6 +1349,8 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 		hrtimer_cancel(&sensor_peri->actuator.actuator_data.afwindow_timer);
 		memset(&sensor_peri->cis.cur_sensor_uctrl, 0, sizeof(camera2_sensor_uctl_t));
 		memset(&sensor_peri->cis.expecting_sensor_dm[0], 0, sizeof(camera2_sensor_dm_t) * EXPECT_DM_NUM);
+		for (i = 0; i < CAM2P0_UCTL_LIST_SIZE; i++)
+			memset(&sensor_peri->cis.sensor_ctls[i].cur_cam20_sensor_udctrl, 0, sizeof(camera2_sensor_uctl_t));
 	}
 	if (ret) {
 		err("[SEN:%d] v4l2_subdev_call(s_stream, on:%d) is fail(%d)",

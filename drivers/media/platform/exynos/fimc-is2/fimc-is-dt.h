@@ -15,9 +15,6 @@
 #include "fimc-is-spi.h"
 #include <exynos-fimc-is-module.h>
 #include <exynos-fimc-is-sensor.h>
-#ifdef ENABLE_SOC_CAMERA
-#include <linux/i2c.h>
-#endif
 
 #define DT_READ_U32(node, key, value) do {\
 		pprop = key; \
@@ -64,11 +61,4 @@ int fimc_is_module_parse_dt(struct device *dev,
 	fimc_is_moudle_callback callback);
 int fimc_is_spi_parse_dt(struct fimc_is_spi *spi);
 int fimc_is_power_setpin(struct device *dev, int position, int sensor_id);
-#ifdef ENABLE_SOC_CAMERA
-typedef int (*fimc_is_moudle_soc_dt_callback)(struct i2c_client *client,
-	struct exynos_platform_fimc_is_module *pdata);
-int fimc_is_sensor_module_soc_parse_dt(struct i2c_client *client,
-	struct exynos_platform_fimc_is_module *pdata,
-	fimc_is_moudle_soc_dt_callback module_callback);
-#endif
 #endif

@@ -625,6 +625,9 @@ enum stats_lowlightmode {
 	STATE_LLS_LEVEL_ZSL_LIKE1 = 7,
 	STATE_LLS_LEVEL_SHARPEN_SINGLE = 8,
 	STATE_LLS_MANUAL_ISO = 9,
+	STATE_LLS_LEVEL_SHARPEN_DR = 10,
+	STATE_LLS_LEVEL_SHARPEN_IMA = 11,
+	STATE_LLS_LEVEL_STK = 12,
 	STATE_LLS_LEVEL_FLASH = 16,
 	STATE_LLS_LEVEL_MULTI_MERGE_2 = 18,
 	STATE_LLS_LEVEL_MULTI_MERGE_3 = 19,
@@ -1544,6 +1547,9 @@ enum camera_op_mode {
 	CAMERA_OP_MODE_GED = 0,   // default
 	CAMERA_OP_MODE_TW,
 	CAMERA_OP_MODE_HAL3_GED,
+	CAMERA_OP_MODE_HAL3_TW,
+	CAMERA_OP_MODE_FAC,
+	CAMERA_OP_MODE_HAL3_FAC,
 };
 
 struct camera2_companion_uctl {
@@ -1642,6 +1648,7 @@ enum camera_vt_mode {
 	VT_MODE_2,   /* qvga ~ vga*/
 	VT_MODE_3,   /* reserved : smart stay */
 	VT_MODE_4,   /* vga ~ hd  */
+	VT_MODE_5,   /* vga ~ hd 20Fps */
 };
 
 /** \brief

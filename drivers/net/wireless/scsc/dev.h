@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -64,6 +64,9 @@
 #define MAX_CHANNEL_LIST 20
 #define SLSI_MAX_RX_BA_SESSIONS (8)
 #define SLSI_STA_ACTION_FRAME_BITMAP (SLSI_ACTION_FRAME_PUBLIC | SLSI_ACTION_FRAME_WMM | SLSI_ACTION_FRAME_WNM | SLSI_ACTION_FRAME_QOS)
+
+/* Default value for MIB SLSI_PSID_UNIFI_DISCONNECT_TIMEOUT + 1 sec*/
+#define SLSI_DEFAULT_AP_DISCONNECT_IND_TIMEOUT 3000
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0))
 #define WLAN_EID_VHT_CAPABILITY 191
@@ -181,6 +184,7 @@ struct slsi_ba_session_rx {
 	u16                       occupied_slots;
 	u16                       expected_sn;
 	u16                       start_sn;
+	u16                       highest_received_sn;
 	bool                      trigger_ba_after_ssn;
 	u8                        tid;
 
@@ -209,12 +213,18 @@ struct slsi_napi {
 #define SLSI_SCAN_SCHED_ID    1
 #define SLSI_SCAN_MAX         3
 
-#define SLSI_SCAN_RESULT_WITH_SSID   0
-#define SLSI_SCAN_RESULT_HIDDEN_SSID 1
-#define SLSI_SCAN_RESULT_HEAD_MAX    2
-
 #define SLSI_SCAN_SSID_MAP_MAX         10 /* Arbitrary value */
 #define SLSI_SCAN_SSID_MAP_EXPIRY_AGE  2  /* If hidden bss not found these many scan cycles, remove map. Arbitrary value*/
+#define SLSI_FW_SCAN_DONE_TIMEOUT_MSEC (15 * 1000)
+
+struct slsi_scan_result {
+	u8 bssid[ETH_ALEN];
+	u8 hidden;
+	int rssi;
+	struct sk_buff *probe_resp;
+	struct sk_buff *beacon;
+	struct slsi_scan_result *next;
+};
 
 /* Per Interface Scan Data
  * Access protected by: cfg80211_lock
@@ -223,7 +233,8 @@ struct slsi_scan {
 	/* When a Scan is running this not NULL. */
 	struct cfg80211_scan_request       *scan_req;
 	struct cfg80211_sched_scan_request *sched_req;
-	struct sk_buff_head                scan_results[SLSI_SCAN_RESULT_HEAD_MAX];
+	bool                               requeue_timeout_work;
+	struct slsi_scan_result *scan_results; /* head for scan_results list*/
 };
 
 struct slsi_ssid_map {
@@ -283,12 +294,6 @@ struct slsi_peer {
 	/* rate limit for peer sinfo mib reads  */
 	struct ratelimit_state    sinfo_mib_get_rs;
 	struct slsi_ba_session_rx *ba_session_rx[NUM_BA_SESSIONS_PER_PEER];
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	int                       ba_tx_state;
-	int                       ba_tx_userpri;
-	s8			  signal;
-	u16			  txrate;
-#endif  /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
 	/* qos map configured at peer end*/
@@ -399,7 +404,7 @@ enum slsi_filter_id {
 
 struct slsi_vif_sta {
 	/* Only valid when the VIF is activated */
-	u8                          vif_status;
+	u8                      vif_status;
 	struct delayed_work     roam_report_work;
 	bool                    is_wps;
 	u16                     eap_hosttag;
@@ -424,9 +429,13 @@ struct slsi_vif_sta {
 	int                     tdls_peer_sta_records;
 	bool                    tdls_enabled;
 	struct cfg80211_bss     *sta_bss;
+	u8                      *assoc_req_add_info_elem;
+	u8                      assoc_req_add_info_elem_len;
 
 	/* List of seen ESS and Freq associated with them */
 	struct list_head        network_map;
+
+	struct slsi_wmm_ac wmm_ac[4];
 };
 
 struct slsi_vif_unsync {
@@ -459,34 +468,24 @@ struct slsi_vif_ap {
 	u8                                ssid_len;
 };
 
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-struct slsi_vif_ibss {
-	u8     *cache_wmm_param_ie;
-	u8     *cache_wmm_info_ie;
-	u8     *cache_wpa_ie;
-	u8     *cache_oui_ie;
-	u8     *add_info_ies;
-	size_t wmm_param_ie_len;
-	size_t wmm_info_ie_len;
-	size_t wpa_ie_len;
-	size_t oui_ie_len;
-	size_t add_info_ies_len;
-	int    beacon_interval;
-	int    rmc_txrate;
-	u8     rmc_addr[ETH_ALEN];
-	int    ba_tx_userpri;
-	int    olsrd_pid;
-	int    tx_fail_seq;
-};
-#endif
-
 #define MAX_ACK_SUPPRESSION_RECORDS 16
+
+#define TCP_ACK_SUPPRESSION_OPTIONS_OFFSET 20
+
+#define TCP_ACK_SUPPRESSION_OPTION_EOL 0
+#define TCP_ACK_SUPPRESSION_OPTION_NOP 1
+#define TCP_ACK_SUPPRESSION_OPTION_WINDOW 3
+#define TCP_ACK_SUPPRESSION_OPTION_SACK 5
+
+#define SLSI_IS_VIF_CHANNEL_5G(ndev_vif) ((ndev_vif->chan) ? (ndev_vif->chan->hw_value > 14) : 0)
+
 struct slsi_tcp_ack_s {
 	int daddr;
 	int dport;
 	int saddr;
 	int sport;
 	struct sk_buff_head list;
+	u8 window_scale_shift_count;
 	u32 ack_seq;
 	int slow_start_count;
 	int count;
@@ -582,9 +581,6 @@ struct netdev_vif {
 	struct slsi_vif_unsync      unsync;
 	struct slsi_vif_sta         sta;
 	struct slsi_vif_ap          ap;
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	struct slsi_vif_ibss	    ibss;
-#endif
 	/* TCP ack suppression. */
 	struct slsi_tcp_ack_s *last_tcp_ack;
 	struct slsi_tcp_ack_s ack_suppression[MAX_ACK_SUPPRESSION_RECORDS];
@@ -596,6 +592,7 @@ struct netdev_vif {
 	unsigned int tack_timeout;
 	unsigned int tack_dacks;
 	unsigned int tack_sacks;
+	unsigned int tack_low_window;
 	unsigned int tack_nocache;
 	unsigned int tack_norecord;
 	unsigned int tack_hasdata;
@@ -870,7 +867,7 @@ struct slsi_dev {
 	struct slsi_ssid_map       ssid_map[SLSI_SCAN_SSID_MAP_MAX];
 	bool                       band_5g_supported;
 	bool                       fw_ht_enabled;
-	u8                         fw_ht_cap[4]; /* HT capabilites is 21 bytes but host is never intersted in last 17 bytes*/
+	u8                         fw_ht_cap[4]; /* HT capabilities is 21 bytes but host is never intersted in last 17 bytes*/
 	bool                       fw_vht_enabled;
 	u8                         fw_vht_cap[4];
 };
@@ -929,7 +926,10 @@ int slsi_check_rf_test_mode(void);
 void slsi_regd_deinit(struct slsi_dev *sdev);
 void slsi_init_netdev_mac_addr(struct slsi_dev *sdev);
 bool slsi_dev_lls_supported(void);
+bool slsi_dev_gscan_supported(void);
 bool slsi_dev_epno_supported(void);
+bool slsi_dev_vo_vi_block_ack(void);
+int slsi_dev_get_scan_result_count(void);
 
 static inline u16 slsi_tx_host_tag(struct slsi_dev *sdev, enum slsi_traffic_q tq)
 {
@@ -951,7 +951,7 @@ static inline struct net_device *slsi_get_netdev_rcu(struct slsi_dev *sdev, u16 
 {
 	WARN_ON(!rcu_read_lock_held());
 	if (ifnum > CONFIG_SCSC_WLAN_MAX_INTERFACES) {
-		WARN(1, "ifnum:%d", ifnum); /* WARN() is used like this to avoid Coverity Error */
+		/* WARN(1, "ifnum:%d", ifnum);  WARN() is used like this to avoid Coverity Error */
 		return NULL;
 	}
 	return rcu_dereference(sdev->netdev[ifnum]);
@@ -977,19 +977,5 @@ static inline struct net_device *slsi_get_netdev(struct slsi_dev *sdev, u16 ifnu
 
 	return dev;
 }
-
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-static inline void slsi_ibss_ampdu_setmode(struct slsi_peer *peer, int mode)
-{
-	if (~peer->ba_tx_state & mode)
-		peer->ba_tx_state |= mode;
-}
-
-static inline void slsi_ibss_ampdu_clrmode(struct slsi_peer *peer, int mode)
-{
-	if (peer->ba_tx_state & mode)
-		peer->ba_tx_state &= ~mode;
-}
-#endif  /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
 
 #endif

@@ -513,6 +513,24 @@ static inline void i2s_fifo(struct i2s_dai *i2s, u32 flush)
 	writel(readl(fic) & ~flush, fic);
 }
 
+/* FIFO level Threshold for Tx DMA request */
+static inline void i2s_fifo_th(struct i2s_dai *i2s, u32 on, u32 threshold)
+{
+	void __iomem *addr = i2s->addr;
+	u32 val = readl(addr + I2SFICS);
+
+	if (on) {
+		val |= (1 << 31|threshold << 24);
+
+	} else {
+		val &= ~(1 << 31);
+	}
+
+	/* Set the FIFO */
+	writel(val, i2s->addr + I2SFICS);
+}
+
+
 static int i2s_set_sysclk(struct snd_soc_dai *dai,
 	  int clk_id, unsigned int rfs, int dir)
 {
@@ -924,6 +942,7 @@ static int i2s_startup(struct snd_pcm_substream *substream,
 			i2s_fifo(i2s, FIC_TXFLUSH);
 			i2s_fifo(other, FIC_TXFLUSH);
 		}
+		i2s_fifo_th(i2s, 1, 0x10);
 	}
 
 	i2s->stream_cnt++;
@@ -1014,8 +1033,7 @@ static int config_setup(struct i2s_dai *i2s)
 
 	/* Select least possible multiple(2) if no constraint set */
 	if (!bfs)
-		bfs = blc * 2;
-	pr_err("%s: bfs=%d\n", __func__, bfs);
+		bfs = blc * i2s->slotnum;
 
 	rfs = i2s->rfs;
 
@@ -1029,10 +1047,9 @@ static int config_setup(struct i2s_dai *i2s)
 			rfs = 384;
 		else
 			rfs = 512;
-		//rfs /= (i2s->slotnum / I2S_DEFAULT_SLOT_NUM);
+		rfs /= (i2s->slotnum / I2S_DEFAULT_SLOT_NUM);
 	}
 
-	pr_err("%s: rfs=%d\n", __func__, rfs);
 	if ((rfs % bfs) || (rfs > 768)) {
 		dev_err(&i2s->pdev->dev,
 			"%d-RFS not supported for %d-BFS\n", rfs, bfs);

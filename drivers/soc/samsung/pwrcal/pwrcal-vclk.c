@@ -4,7 +4,7 @@
 #include "pwrcal-clk.h"
 #include "pwrcal-rae.h"
 #include <linux/exynos-ss.h>
-
+#include <trace/events/exynos.h>
 
 #define is_vclk(id)	((id & 0x0F000000) == 0x0A000000)
 
@@ -991,7 +991,7 @@ struct pwrcal_vclk_none vclk_0;
 int vclk_setrate(struct vclk *vclk, unsigned long rate)
 {
 	int ret = 0;
-#if defined(CONFIG_EXYNOS_SNAPSHOT)
+#ifdef CONFIG_EXYNOS_SNAPSHOT_CLK
 	const char *name = "vclk_setrate";
 #endif
 
@@ -1001,6 +1001,7 @@ int vclk_setrate(struct vclk *vclk, unsigned long rate)
 	}
 
 	exynos_ss_clk(vclk, name, ESS_FLAG_IN);
+	trace_exynos_clk_in(vclk, __func__);
 
 	if (vclk->ops->set_rate)
 		ret = vclk->ops->set_rate(vclk, rate);
@@ -1010,21 +1011,27 @@ int vclk_setrate(struct vclk *vclk, unsigned long rate)
 	if (!ret) {
 		vclk->vfreq = rate;
 		exynos_ss_clk(vclk, name, ESS_FLAG_OUT);
-	} else
+		trace_exynos_clk_out(vclk, __func__);
+	} else {
 		exynos_ss_clk(vclk, name, ESS_FLAG_ON);
+		trace_exynos_clk_on(vclk, __func__);
+	}
 out:
 	return ret;
 }
 unsigned long vclk_getrate(struct vclk *vclk)
 {
 	int ret = 0;
-#if defined(CONFIG_EXYNOS_SNAPSHOT)
+#ifdef CONFIG_EXYNOS_SNAPSHOT_CLK
 	const char *name = "vclk_getrate";
 #endif
 
 	exynos_ss_clk(vclk, name, ESS_FLAG_IN);
+	trace_exynos_clk_in(vclk, __func__);
+
 	if (!vclk->ref_count) {
 		exynos_ss_clk(vclk, name, ESS_FLAG_ON);
+		trace_exynos_clk_on(vclk, __func__);
 		goto out;
 	}
 
@@ -1033,8 +1040,11 @@ unsigned long vclk_getrate(struct vclk *vclk)
 	if (ret > 0) {
 		vclk->vfreq = (unsigned long)ret;
 		exynos_ss_clk(vclk, name, ESS_FLAG_OUT);
-	} else
+		trace_exynos_clk_out(vclk, __func__);
+	} else {
 		exynos_ss_clk(vclk, name, ESS_FLAG_ON);
+		trace_exynos_clk_on(vclk, __func__);
+	}
 out:
 	return ret;
 }
@@ -1042,7 +1052,7 @@ int vclk_enable(struct vclk *vclk)
 {
 	int ret = 0;
 	unsigned int tmp;
-#if defined(CONFIG_EXYNOS_SNAPSHOT)
+#ifdef CONFIG_EXYNOS_SNAPSHOT_CLK
 	const char *name = "vclk_enable";
 #endif
 
@@ -1053,6 +1063,7 @@ int vclk_enable(struct vclk *vclk)
 		ret = vclk_enable(vclk->parent);
 
 	exynos_ss_clk(vclk, name, ESS_FLAG_IN);
+	trace_exynos_clk_in(vclk, __func__);
 	if (ret)
 		goto out;
 
@@ -1075,8 +1086,11 @@ int vclk_enable(struct vclk *vclk)
 out:
 	if (!ret) {
 		exynos_ss_clk(vclk, name, ESS_FLAG_OUT);
-	} else
+		trace_exynos_clk_out(vclk, __func__);
+	} else {
 		exynos_ss_clk(vclk, name, ESS_FLAG_ON);
+		trace_exynos_clk_on(vclk, __func__);
+	}
 
 	return ret;
 }
@@ -1084,7 +1098,7 @@ int vclk_disable(struct vclk *vclk)
 {
 	int ret = 0;
 	int parent_disable = 0;
-#if defined(CONFIG_EXYNOS_SNAPSHOT)
+#ifdef CONFIG_EXYNOS_SNAPSHOT_CLK
 	const char *name = "vclk_disable";
 #endif
 
@@ -1098,13 +1112,17 @@ int vclk_disable(struct vclk *vclk)
 		goto out;
 
 	exynos_ss_clk(vclk, name, ESS_FLAG_IN);
+	trace_exynos_clk_in(vclk, __func__);
 	ret = vclk->ops->disable(vclk);
 
 	if (ret) {
 		exynos_ss_clk(vclk, name, ESS_FLAG_ON);
+		trace_exynos_clk_on(vclk, __func__);
 		goto out;
-	} else
+	} else {
 		exynos_ss_clk(vclk, name, ESS_FLAG_OUT);
+		trace_exynos_clk_out(vclk, __func__);
+	}
 
 	if (parent_disable && vclk->parent != VCLK_NONE)
 		ret = vclk_disable(vclk->parent);

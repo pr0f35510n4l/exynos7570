@@ -27,6 +27,10 @@
 		spd_disp: spd-disp@11C84020 {
 			compatible = "samsung,exynos-spd";
 		};
+
+		spd_fm: spd-fm@11C84020 {
+			compatible = "samsung,exynos-spd";
+		};
 	};
 
 	pd_isp: pd-isp@11C84040 {

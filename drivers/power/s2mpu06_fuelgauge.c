@@ -489,7 +489,7 @@ bool s2mpu06_hal_fg_fuelalert_process(void *irq_data, bool is_fuel_alerted)
 	struct s2mpu06_fuelgauge_data *fuelgauge = irq_data;
 	int ret;
 
-	ret = s2mpu06_write_2byte_reg(fuelgauge->i2c, S2MPU06_FG_REG_IRQ, 0x00);
+	ret = s2mpu06_write_reg(fuelgauge->i2c, S2MPU06_FG_REG_IRQ, 0x00);
 	if (ret < 0)
 		dev_err(&fuelgauge->i2c->dev, "%s: Error(%d)\n", __func__, ret);
 
@@ -627,6 +627,7 @@ static int s2mpu06_fg_set_property(struct power_supply *psy,
 			fuelgauge->is_charging = false;
 		else
 			fuelgauge->is_charging = true;
+		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		if (val->intval == SEC_FUELGAUGE_CAPACITY_TYPE_RESET)
 			fuelgauge->initial_update_of_soc = true;

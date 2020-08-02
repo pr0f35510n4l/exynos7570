@@ -77,6 +77,9 @@ enum exynos7570_clks {
 	/* number of dfs driver starts from 1000 */
 	dfs_mif = 1000, dfs_mif_sw, dfs_int, dfs_cam, dfs_disp,
 
+	/* number for clkout port starts from 1050 */
+	oscclk_aud = 1050,
+
 	/* clk id for sysmmu: 1100 ~ 1149
 	 * NOTE: clock IDs of sysmmus are defined in
 	 * include/dt-bindings/clock/exynos8890.h
@@ -100,7 +103,11 @@ static struct init_vclk exynos7570_mif_vclks[] __initdata = {
 	VCLK(mif_uart_debug, sclk_uart_debug, "sclk_uart_debug", 0, 0, NULL),
 	VCLK(mif_uart_sensor, sclk_uart_sensor, "sclk_uart_sensor", 0, 0, NULL),
 	VCLK(mif_spi_rearfrom, sclk_spi_rearfrom, "sclk_spi_rearfrom", 0, 0, NULL),
+#ifdef CONFIG_SENSORS_FINGERPRINT
+	VCLK(mif_spi_ese, sclk_spi_ese, "sclk_spi_ese", 0, 0, "fp-spi-sclk"),
+#else
 	VCLK(mif_spi_ese, sclk_spi_ese, "sclk_spi_ese", 0, 0, NULL),
+#endif
 	VCLK(mif_mmc0, sclk_mmc0, "sclk_mmc0", 0, 0, NULL),
 	VCLK(mif_mmc2, sclk_mmc2, "sclk_mmc2", 0, 0, NULL),
 	VCLK(mif_usb20drd_refclk, sclk_usb20drd_refclk, "sclk_usb20drd_refclk", 0, 0, NULL),
@@ -141,7 +148,11 @@ static struct init_vclk exynos7570_peri_vclks[] __initdata = {
 	VCLK(peri_otp_con_top, gate_peri_otp_con_top, "gate_peri_otp_con_top", 0, 0, NULL),
 	VCLK(peri_uart_debug, gate_peri_uart_debug, "gate_peri_uart_debug", 0, 0, NULL),
 	VCLK(peri_uart_sensor, gate_peri_uart_sensor, "gate_peri_uart_sensor", 0, 0, NULL),
+#ifdef CONFIG_SENSORS_FINGERPRINT
+	VCLK(peri_spi_ese, gate_peri_spi_ese, "gate_peri_spi_ese", 0, 0, "fp-spi-pclk"),
+#else
 	VCLK(peri_spi_ese, gate_peri_spi_ese, "gate_peri_spi_ese", 0, 0, NULL),
+#endif
 	VCLK(peri_spi_rearfrom, gate_peri_spi_rearfrom, "gate_peri_spi_rearfrom", 0, 0, NULL),
 	VCLK(peri_mct, gate_peri_mct, "gate_peri_mct", 0, 0, NULL),
 	VCLK(peri_wdt_cpucl0, gate_peri_wdt_cpucl0, "gate_peri_wdt_cpucl0", 0, 0, NULL),
@@ -225,6 +236,10 @@ static struct init_vclk exynos7570_dfs_vclks[] __initdata = {
 	VCLK(dfs_disp, dvfs_disp, "dvfs_disp", 0, VCLK_DFS, NULL),
 };
 
+static struct init_vclk exynos7570_clkout_vclks[] __initdata = {
+	VCLK(oscclk_aud, pxmxdx_oscclk_aud, "pxmxdx_oscclk_aud", 0, 0, NULL),
+};
+
 /* register exynos7570 clocks */
 void __init exynos7570_clk_init(struct device_node *np)
 {
@@ -262,6 +277,7 @@ void __init exynos7570_clk_init(struct device_node *np)
 	samsung_register_vclk(ctx, exynos7570_isp_vclks, ARRAY_SIZE(exynos7570_isp_vclks));
 	samsung_register_vclk(ctx, exynos7570_apm_vclks, ARRAY_SIZE(exynos7570_apm_vclks));
 	samsung_register_vclk(ctx, exynos7570_dfs_vclks, ARRAY_SIZE(exynos7570_dfs_vclks));
+	samsung_register_vclk(ctx, exynos7570_clkout_vclks, ARRAY_SIZE(exynos7570_clkout_vclks));
 
 	samsung_clk_of_add_provider(np, ctx);
 

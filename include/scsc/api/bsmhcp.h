@@ -19,6 +19,8 @@
 #define BSMHCP_TRANSFER_RING_CMD_SIZE           (8)
 #define BSMHCP_TRANSFER_RING_EVT_SIZE           (32)
 #define BSMHCP_TRANSFER_RING_ACL_SIZE           (32)
+#define BSMHCP_TRANSFER_RING_AVDTP_SIZE         (16)
+
 /* Of the buffers in BSMHCP_TRANSFER_RING_ACL_SIZE, reserve a number for ULP
  * operation. */
 #define BSMHCP_TRANSFER_RING_ACL_ULP_RESERVED   (4)
@@ -74,6 +76,7 @@
 #define BSMHCP_FEATURE_LPA2DP                   (0x00000001)
 #define BSMHCP_FEATURE_M4_INTERRUPTS            (0x00000002)
 #define BSMHCP_FEATURE_FW_INFORMATION           (0x00000004)
+#define BSMHCP_FEATURE_AVDTP_TRANSFER_RING      (0x00000008)
 
 #define BSMHCP_CONTROL_START_PANIC              (0x10DEAD01)
 #define BSMHCP_CONTROL_STOP_PANIC               (0x0201DEAD)
@@ -128,6 +131,13 @@ struct BSMHCP_TD_ACL_TX_FREE {
 	uint8_t  buffer_index;
 	uint8_t  reserved;
 	uint16_t hci_connection_handle;
+};
+
+struct BSMHCP_TD_AVDTP {
+	uint32_t flags;
+	uint16_t l2cap_cid;
+	uint16_t hci_connection_handle;
+	uint32_t reserved;
 };
 
 struct BSMHCP_ACL_TR_DRV_INDEX {
@@ -201,7 +211,7 @@ struct BSMHCP_HEADER {
 	uint8_t                         service_state;              /* 0x56 */
 	uint8_t                         reserved_u8;                /* 0x57 */
 	uint32_t                        reserved4_u32;              /* 0x58 */
-	uint8_t                         reserved3[0x04];            /* 0x5C */
+	uint32_t                        mailbox_avdtp_read;         /* 0x5C */
 
 	/* AP RO - R4 NA - M4 RW - 32 octets */
 	uint32_t                        mailbox_acl_tx_read;        /* 0x60 */
@@ -218,7 +228,7 @@ struct BSMHCP_HEADER {
 
 	/* AP RW - M4/R4 RO */
 	uint32_t                        mailbox_timing_read;        /* 0xA0 */
-	uint32_t                        reserved7_u32;              /* 0xA4 */
+	uint32_t                        mailbox_avdtp_write;        /* 0xA4 */
 	uint32_t                        reserved8_u32;              /* 0xA8 */
 	uint32_t                        reserved9_u32;              /* 0xAC */
 	uint32_t                        reserved10_u32;             /* 0xB0 */
@@ -246,8 +256,12 @@ struct BSMHCP_PROTOCOL {
 	struct BSMHCP_TD_CONTROL /* offset: 0x00000100 */
 		hci_cmd_transfer_ring[BSMHCP_TRANSFER_RING_CMD_SIZE];
 
-	uint8_t /* offset: 0x00000920 */
-		to_air_reserved[0x2080];
+	/* AVDTP detection */
+	struct BSMHCP_TD_AVDTP /* offset: 0x00000920 */
+		avdtp_transfer_ring[BSMHCP_TRANSFER_RING_AVDTP_SIZE];
+
+	uint8_t /* offset: 0x000009E0 */
+		to_air_reserved[0x1FC0];
 
 	struct BSMHCP_TD_ACL_TX_DATA /* offset: 0x000029A0 */
 		acl_tx_data_transfer_ring[BSMHCP_TRANSFER_RING_ACL_SIZE];

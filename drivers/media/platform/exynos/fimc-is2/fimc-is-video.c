@@ -283,13 +283,18 @@ struct fimc_is_fmt *fimc_is_find_format(u32 pixelformat,
 	return result;
 }
 
-void fimc_is_set_plane_size(struct fimc_is_frame_cfg *frame, unsigned int sizes[])
+static void fimc_is_set_plane_size(struct fimc_is_frame_cfg *frame,
+	unsigned int sizes[],
+	unsigned int num_planes)
 {
 	u32 plane;
 	u32 width[FIMC_IS_MAX_PLANES];
+	u32 image_planes;
 
 	BUG_ON(!frame);
 	BUG_ON(!frame->format);
+
+	image_planes = num_planes - SPARE_PLANE;
 
 	for (plane = 0; plane < FIMC_IS_MAX_PLANES; ++plane)
 		width[plane] = max(frame->width * frame->format->bitsperpixel[plane] / BITS_PER_BYTE,
@@ -298,114 +303,135 @@ void fimc_is_set_plane_size(struct fimc_is_frame_cfg *frame, unsigned int sizes[
 	switch (frame->format->pixelformat) {
 	case V4L2_PIX_FMT_YUV444:
 		dbg("V4L2_PIX_FMT_YUV444(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++)
+			sizes[plane] = width[0] * frame->height;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_YUYV:
 	case V4L2_PIX_FMT_UYVY:
 		dbg("V4L2_PIX_FMT_YUYV(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++)
+			sizes[plane] = width[0] * frame->height;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_NV16:
 	case V4L2_PIX_FMT_NV61:
 		dbg("V4L2_PIX_FMT_NV16(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height
-			+ width[1] * frame->height;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++)
+			sizes[plane] = width[0] * frame->height
+				+ width[1] * frame->height;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_YUV422P:
 		dbg("V4L2_PIX_FMT_YUV422P(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height
-			+ width[1] * frame->height / 2
-			+ width[2] * frame->height / 2;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++) {
+			sizes[plane] = width[0] * frame->height
+				+ width[1] * frame->height / 2
+				+ width[2] * frame->height / 2;
+		}
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_NV12:
 	case V4L2_PIX_FMT_NV21:
 		dbg("V4L2_PIX_FMT_NV12(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height
-			+ width[1] * frame->height / 2;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++) {
+			sizes[plane] = width[0] * frame->height
+				+ width[1] * frame->height / 2;
+		}
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_NV12M:
 	case V4L2_PIX_FMT_NV21M:
 		dbg("V4L2_PIX_FMT_NV12M(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height;
-		sizes[1] = width[1] * frame->height / 2;
-		sizes[2] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane += 2) {
+			sizes[plane] = width[0] * frame->height;
+			sizes[plane + 1] = width[1] * frame->height / 2;
+		}
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_YUV420:
 	case V4L2_PIX_FMT_YVU420:
 		dbg("V4L2_PIX_FMT_YVU420(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height
-			+ width[1] * frame->height / 2
-			+ width[2] * frame->height / 2;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++) {
+			sizes[plane] = width[0] * frame->height
+				+ width[1] * frame->height / 2
+				+ width[2] * frame->height / 2;
+		}
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_YUV420M:
 	case V4L2_PIX_FMT_YVU420M:
 		dbg("V4L2_PIX_FMT_YVU420M(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = width[0] * frame->height;
-		sizes[1] = width[1] * frame->height / 2;
-		sizes[2] = width[2] * frame->height / 2;
-		sizes[3] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane += 3) {
+			sizes[plane] = width[0] * frame->height;
+			sizes[plane + 1] = width[1] * frame->height / 2;
+			sizes[plane + 2] = width[2] * frame->height / 2;
+		}
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_SGRBG8:
 		dbg("V4L2_PIX_FMT_SGRBG8(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = frame->width * frame->height;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++)
+			sizes[plane] = frame->width * frame->height;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_SBGGR8:
 		dbg("V4L2_PIX_FMT_SBGGR8(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = frame->width * frame->height;
-		sizes[1] = SPARE_SIZE;
+		for (plane = 0; plane < image_planes; plane++)
+			sizes[plane] = frame->width * frame->height;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_SBGGR10:
 		dbg("V4L2_PIX_FMT_SBGGR10(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = ALIGN((frame->width * 5) >> 2, 16) * frame->height;
-		if (frame->bytesperline[0]) {
-			if (frame->bytesperline[0] >= ALIGN((frame->width * 5) >> 2, 16)) {
-			sizes[0] = frame->bytesperline[0]
-			    * frame->height;
-			} else {
-				err("Bytesperline too small\
-					(fmt(V4L2_PIX_FMT_SBGGR10), W(%d), Bytes(%d))",
-				frame->width,
-				frame->bytesperline[0]);
+		for (plane = 0; plane < image_planes; plane++) {
+			sizes[plane] = ALIGN((frame->width * 5) >> 2, 16) * frame->height;
+			if (frame->bytesperline[0]) {
+				if (frame->bytesperline[0] >= ALIGN((frame->width * 5) >> 2, 16)) {
+				sizes[plane] = frame->bytesperline[0]
+				    * frame->height;
+				} else {
+					err("Bytesperline too small\
+						(fmt(V4L2_PIX_FMT_SBGGR10), W(%d), Bytes(%d))",
+					frame->width,
+					frame->bytesperline[0]);
+				}
 			}
 		}
-		sizes[1] = SPARE_SIZE;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_SBGGR12:
 		dbg("V4L2_PIX_FMT_SBGGR12(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = ALIGN((frame->width * 3) >> 1, 16) * frame->height;
-		if (frame->bytesperline[0]) {
-			if (frame->bytesperline[0] >= ALIGN((frame->width * 3) >> 1, 16)) {
-				sizes[0] = frame->bytesperline[0] * frame->height;
-			} else {
-				err("Bytesperline too small\
-					(fmt(V4L2_PIX_FMT_SBGGR12), W(%d), Bytes(%d))",
-				frame->width,
-				frame->bytesperline[0]);
+		for (plane = 0; plane < image_planes; plane++) {
+			sizes[plane] = ALIGN((frame->width * 3) >> 1, 16) * frame->height;
+			if (frame->bytesperline[0]) {
+				if (frame->bytesperline[0] >= ALIGN((frame->width * 3) >> 1, 16)) {
+					sizes[plane] = frame->bytesperline[0] * frame->height;
+				} else {
+					err("Bytesperline too small\
+						(fmt(V4L2_PIX_FMT_SBGGR12), W(%d), Bytes(%d))",
+					frame->width,
+					frame->bytesperline[0]);
+				}
 			}
 		}
-		sizes[1] = SPARE_SIZE;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	case V4L2_PIX_FMT_SBGGR16:
 		dbg("V4L2_PIX_FMT_SBGGR16(w:%d)(h:%d)\n", frame->width, frame->height);
-		sizes[0] = frame->width * frame->height * 2;
-		if (frame->bytesperline[0]) {
-			if (frame->bytesperline[0] >= frame->width * 2) {
-				sizes[0] = frame->bytesperline[0] * frame->height;
-			} else {
-				err("Bytesperline too small\
-					(fmt(V4L2_PIX_FMT_SBGGR16), W(%d), Bytes(%d))",
-				frame->width,
-				frame->bytesperline[0]);
+		for (plane = 0; plane < image_planes; plane++) {
+			sizes[plane] = frame->width * frame->height * 2;
+			if (frame->bytesperline[0]) {
+				if (frame->bytesperline[0] >= frame->width * 2) {
+					sizes[plane] = frame->bytesperline[0] * frame->height;
+				} else {
+					err("Bytesperline too small\
+						(fmt(V4L2_PIX_FMT_SBGGR16), W(%d), Bytes(%d))",
+					frame->width,
+					frame->bytesperline[0]);
+				}
 			}
 		}
-		sizes[1] = SPARE_SIZE;
+		sizes[plane] = SPARE_SIZE;
 		break;
 	default:
 		err("unknown pixelformat(%c%c%c%c)\n", (char)((frame->format->pixelformat >> 0) & 0xFF),
@@ -595,6 +621,12 @@ static int fimc_is_queue_set_format_mplane(struct fimc_is_queue *queue,
 	queue->framecfg.width			= pix->width;
 	queue->framecfg.height			= pix->height;
 
+	/* for multi-buffer */
+	if (pix->reserved[0] > 0 && pix->reserved[0] <= FIMC_IS_MAX_PLANES)
+		queue->framecfg.num_buffers	= pix->reserved[0];
+	else
+		queue->framecfg.num_buffers	= 1;
+
 	for (plane = 0; plane < fmt->hw_plane; ++plane) {
 		if (pix->plane_fmt[plane].bytesperline) {
 			queue->framecfg.bytesperline[plane] =
@@ -610,6 +642,12 @@ static int fimc_is_queue_set_format_mplane(struct fimc_is_queue *queue,
 		goto p_err;
 	}
 
+	info("[FID:%04X]pixelformat(%c%c%c%c), num_buffer(%d)\n", queue->id,
+		(char)((fmt->pixelformat >> 0) & 0xFF),
+		(char)((fmt->pixelformat >> 8) & 0xFF),
+		(char)((fmt->pixelformat >> 16) & 0xFF),
+		(char)((fmt->pixelformat >> 24) & 0xFF),
+		queue->framecfg.num_buffers);
 p_err:
 	return ret;
 }
@@ -622,6 +660,8 @@ int fimc_is_queue_setup(struct fimc_is_queue *queue,
 {
 	u32 ret = 0;
 	u32 plane;
+	u32 num_planes_single;
+	u32 num_buffers;
 
 	BUG_ON(!queue);
 	BUG_ON(!alloc_ctx);
@@ -630,9 +670,16 @@ int fimc_is_queue_setup(struct fimc_is_queue *queue,
 	BUG_ON(!allocators);
 	BUG_ON(!queue->framecfg.format);
 
-	*num_planes = (unsigned int)(queue->framecfg.format->num_planes);
+	num_planes_single = queue->framecfg.format->num_planes - SPARE_PLANE;
+	num_buffers = queue->framecfg.num_buffers;
 
-	fimc_is_set_plane_size(&queue->framecfg, sizes);
+	/* In case of high frame rate solution, HAL must set num_buffers */
+	if (num_buffers)
+		*num_planes = (unsigned int)(num_planes_single * num_buffers + SPARE_PLANE);
+	else
+		*num_planes = (unsigned int)(num_planes_single + SPARE_PLANE);
+
+	fimc_is_set_plane_size(&queue->framecfg, sizes, *num_planes);
 
 	for (plane = 0; plane < *num_planes; plane++) {
 		allocators[plane] = alloc_ctx;
@@ -687,9 +734,11 @@ int fimc_is_queue_buffer_queue(struct fimc_is_queue *queue,
 	}
 
 	/* plane address check */
-	if (video->resourcemgr->hal_version == IS_HAL_VER_1_0) {
-		for (i = 0; i < frame->planes; i++) {
-			if (frame->dvaddr_buffer[i] != queue->buf_dva[index][i]) {
+	for (i = 0; i < frame->planes; i++) {
+		if (frame->dvaddr_buffer[i] != queue->buf_dva[index][i]) {
+			if (video->resourcemgr->hal_version == IS_HAL_VER_3_2) {
+				frame->dvaddr_buffer[i] = queue->buf_dva[index][i];
+			} else {
 				mverr("buffer[%d][%d] is changed(%08X != %08lX)", vctx, video, index, i,
 					frame->dvaddr_buffer[i], queue->buf_dva[index][i]);
 				ret = -EINVAL;

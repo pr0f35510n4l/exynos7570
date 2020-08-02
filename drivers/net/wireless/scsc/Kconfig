@@ -4,12 +4,6 @@ config SCSC_WLAN
 	depends on CFG80211
 
 if SCSC_WLAN != n
-config SCSC_WLAN_OXYGEN_ENABLE
-        bool "Enable OXYGEN for SCSC WLAN"
-        default n
-        ---help---
-          This option enables OXYGEN for SCSC WLAN.
-
 config SCSC_WLAN_KEY_MGMT_OFFLOAD
         bool "Enable roam offload for SCSC WLAN"
         default y

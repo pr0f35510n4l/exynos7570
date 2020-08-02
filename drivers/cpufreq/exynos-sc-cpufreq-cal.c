@@ -71,7 +71,7 @@ static int exynos_sc_cpufreq_init_cal_table(void)
         struct dvfs_rate_volt *ptr_temp_table;
         struct exynos_dvfs_info *ptr = exynos_info;
         unsigned int cal_max_freq;
-        unsigned int cal_max_support_idx;
+        unsigned int cal_max_support_idx = 0;
 
         if (!ptr->freq_table || !ptr->volt_table) {
                 pr_err("%s: freq of volt table is NULL\n", __func__);

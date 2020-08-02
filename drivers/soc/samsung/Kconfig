@@ -71,7 +71,6 @@ config MCINFO_SYSFS
 
 menuconfig EXYNOS_BCM
 	bool "EXYNOS_BCM driver support"
-	default y
 	help
 	  Enable exynos_bcm driver support
 
@@ -96,3 +95,9 @@ config EXYNOS_RGT
 source "drivers/soc/samsung/acpm/Kconfig"
 
 endif #SOC_SAMSUNG
+
+config SEC_INCELL
+	bool "Incell data & function for Samsung"
+	default n
+	help
+	  say y to enable incell data & function for Samsung.

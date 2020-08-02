@@ -17,7 +17,6 @@
 #include "mib.h"
 #include <scsc/scsc_mx.h>
 #include "dev.h"
-#include "oxygen_ioctl.h"
 
 #define CMD_RXFILTERADD         "RXFILTER-ADD"
 #define CMD_RXFILTERREMOVE              "RXFILTER-REMOVE"
@@ -66,19 +65,6 @@
 #define CMD_HAPD_MAX_NUM_STA            "HAPD_MAX_NUM_STA"
 #define CMD_COUNTRY            "COUNTRY"
 #define CMD_SEND_GK                               "SEND_GK"
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-#define CMD_SETIBSSBEACONOUIDATA "SETIBSSBEACONOUIDATA"
-#define CMD_GETIBSSPEERINFOALL "GETIBSSPEERINFOALL"
-#define CMD_GETIBSSPEERINFO "GETIBSSPEERINFO"
-#define CMD_SETIBSSAMPDU "SETIBSSAMPDU"
-#define CMD_SETIBSSANTENNAMODE "SETIBSSANTENNAMODE"
-#define CMD_SETRMCENABLE "SETRMCENABLE"
-#define CMD_SETRMCTXRATE "SETRMCTXRATE"
-#define CMD_SETRMCACTIONPERIOD "SETRMCACTIONPERIOD"
-#define CMD_SETRMCLEADER "SETRMCLEADER"
-#define CMD_SETIBSSTXFAILEVENT "SETIBSSTXFAILEVENT"
-#define CMD_SETIBSSROUTETABLE "SETIBSSROUTETABLE"
-#endif
 #define CMD_SETAPP2PWPSIE "SET_AP_P2P_WPS_IE"
 #define CMD_P2PSETPS "P2P_SET_PS"
 #define CMD_P2PSETNOA "P2P_SET_NOA"
@@ -626,9 +612,8 @@ static int slsi_p2p_lo_stop(struct net_device *dev)
 	ndev_vif->unsync.listen_offload = false;
 
 	/* Deactivating the p2p unsynchronized vif */
-	if (ndev_vif->sdev->p2p_state == P2P_LISTENING) {
+	if (ndev_vif->sdev->p2p_state == P2P_LISTENING)
 		slsi_p2p_vif_deactivate(ndev_vif->sdev, ndev_vif->wdev.netdev, true);
-	}
 
 	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
 
@@ -1774,7 +1759,7 @@ static int slsi_print_regulatory(struct slsi_802_11d_reg_domain *domain_info, ch
 			for (k = 0; k < domain_info->regdomain->n_reg_rules; k++) {
 				reg_rule = &domain_info->regdomain->reg_rules[k];
 				if ((reg_rule->freq_range.start_freq_khz <= channel_start_freq) &&
-				    (reg_rule->freq_range.end_freq_khz >= channel_end_freq)) {
+					(reg_rule->freq_range.end_freq_khz >= channel_end_freq)) {
 					if (display_pattern)
 						cur_pos += snprintf(buf + cur_pos, buf_len - cur_pos, ", %d", j);
 					else
@@ -2141,28 +2126,6 @@ int slsi_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 
 		ret = slsi_gk_key_write(dev, command + skip,
 					priv_cmd.total_len - skip);
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	} else if (strnicmp(command, CMD_SETIBSSBEACONOUIDATA, strlen(CMD_SETIBSSBEACONOUIDATA)) == 0) {
-		ret = oxygen_set_ibss_beacon_oui_data(dev, command, priv_cmd.buf, priv_cmd.total_len);
-	} else if (strnicmp(command, CMD_GETIBSSPEERINFOALL, strlen(CMD_GETIBSSPEERINFOALL)) == 0) {
-		ret = oxygen_get_ibss_peer_info(dev, command, priv_cmd.buf, priv_cmd.total_len, true);
-	} else if (strnicmp(command, CMD_GETIBSSPEERINFO, strlen(CMD_GETIBSSPEERINFO)) == 0) {
-		ret = oxygen_get_ibss_peer_info(dev, command, priv_cmd.buf, priv_cmd.total_len, false);
-	} else if (strnicmp(command, CMD_SETIBSSAMPDU, strlen(CMD_SETIBSSAMPDU)) == 0) {
-		ret = oxygen_set_ibss_ampdu(dev, command, priv_cmd.buf, priv_cmd.total_len);
-	} else if (strnicmp(command, CMD_SETIBSSANTENNAMODE, strlen(CMD_SETIBSSANTENNAMODE)) == 0) {
-		ret = oxygen_set_ibss_antenna_mode(dev, command, priv_cmd.buf, priv_cmd.total_len);
-	} else if (strnicmp(command, CMD_SETRMCENABLE, strlen(CMD_SETRMCENABLE)) == 0) {
-		ret = oxygen_set_rmc_enable(dev, command, priv_cmd.buf, priv_cmd.total_len);
-	} else if (strnicmp(command, CMD_SETRMCTXRATE, strlen(CMD_SETRMCTXRATE)) == 0) {
-		ret = oxygen_set_rmc_tx_rate(dev, command, priv_cmd.buf, priv_cmd.total_len);
-	} else if (strnicmp(command, CMD_SETRMCACTIONPERIOD, strlen(CMD_SETRMCACTIONPERIOD)) == 0) {
-		ret = oxygen_set_rmc_action_period(dev, command, priv_cmd.buf, priv_cmd.total_len);
-	} else if (strnicmp(command, CMD_SETRMCLEADER, strlen(CMD_SETRMCLEADER)) == 0) {
-		ret = oxygen_set_rmc_leader(dev, command, priv_cmd.buf, priv_cmd.total_len);
-	} else if (strnicmp(command, CMD_SETIBSSTXFAILEVENT, strlen(CMD_SETIBSSTXFAILEVENT)) == 0) {
-		ret = oxygen_set_ibss_tx_fail_event(dev, command, priv_cmd.buf, priv_cmd.total_len);
-#endif /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
 	} else if (strnicmp(command, CMD_SETAPP2PWPSIE, strlen(CMD_SETAPP2PWPSIE)) == 0) {
 		ret = slsi_set_ap_p2p_wps_ie(dev, command, priv_cmd.total_len);
 	} else if (strnicmp(command, CMD_P2PSETPS, strlen(CMD_P2PSETPS)) == 0) {

@@ -81,6 +81,7 @@ typedef enum {
 	ADC_RESERVED_VZW	= 0x0e, /* 0x01110 28.7K ohm */
 	ADC_INCOMPATIBLE_VZW	= 0x0f, /* 0x01111 34K ohm */
 	ADC_SMARTDOCK		= 0x10, /* 0x10000 40.2K ohm */
+	ADC_RDU_TA		= 0x10, /* 0x10000 40.2K ohm */
 	ADC_HMT			= 0x11, /* 0x10001 49.9K ohm */
 	ADC_AUDIODOCK		= 0x12, /* 0x10010 64.9K ohm */
 	ADC_USB_LANHUB		= 0x13, /* 0x10011 80.07K ohm */
@@ -131,6 +132,7 @@ typedef enum {
 	ATTACHED_DEV_JIG_UART_OFF_VB_FG_MUIC,	/* for fuelgauge test */
 
 	ATTACHED_DEV_JIG_UART_ON_MUIC,
+	ATTACHED_DEV_JIG_UART_ON_VB_MUIC,
 	ATTACHED_DEV_JIG_USB_OFF_MUIC,
 	ATTACHED_DEV_JIG_USB_ON_MUIC,
 	ATTACHED_DEV_SMARTDOCK_MUIC,
@@ -139,8 +141,8 @@ typedef enum {
 	ATTACHED_DEV_SMARTDOCK_USB_MUIC,
 	ATTACHED_DEV_UNIVERSAL_MMDOCK_MUIC,
 	ATTACHED_DEV_AUDIODOCK_MUIC,
-	ATTACHED_DEV_MHL_MUIC,
 
+	ATTACHED_DEV_MHL_MUIC,
 	ATTACHED_DEV_CHARGING_CABLE_MUIC,
 	ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC,
 	ATTACHED_DEV_AFC_CHARGER_PREPARE_DUPLI_MUIC,
@@ -150,8 +152,8 @@ typedef enum {
 	ATTACHED_DEV_AFC_CHARGER_ERR_V_MUIC,
 	ATTACHED_DEV_AFC_CHARGER_ERR_V_DUPLI_MUIC,
 	ATTACHED_DEV_QC_CHARGER_PREPARE_MUIC,
-	ATTACHED_DEV_QC_CHARGER_5V_MUIC,
 
+	ATTACHED_DEV_QC_CHARGER_5V_MUIC,
 	ATTACHED_DEV_QC_CHARGER_ERR_V_MUIC,
 	ATTACHED_DEV_QC_CHARGER_9V_MUIC,
 	ATTACHED_DEV_HV_ID_ERR_UNDEFINED_MUIC,
@@ -161,10 +163,12 @@ typedef enum {
 	ATTACHED_DEV_VZW_ACC_MUIC,
 	ATTACHED_DEV_VZW_INCOMPATIBLE_MUIC,
 	ATTACHED_DEV_USB_LANHUB_MUIC,
-	ATTACHED_DEV_TYPE2_CHG_MUIC,
 
+	ATTACHED_DEV_TYPE2_CHG_MUIC,
 	ATTACHED_DEV_UNSUPPORTED_ID_MUIC,
 	ATTACHED_DEV_UNSUPPORTED_ID_VB_MUIC,
+	ATTACHED_DEV_UNDEFINED_RANGE_MUIC,
+	ATTACHED_DEV_RDU_TA_MUIC,
 	ATTACHED_DEV_UNKNOWN_MUIC,
 	ATTACHED_DEV_NUM,
 } muic_attached_dev_t;
@@ -186,8 +190,6 @@ typedef enum {
 struct muic_platform_data {
 	int irq_gpio;
 
-	int switch_sel;
-
 	/* muic current USB/UART path */
 	int usb_path;
 	int uart_path;
@@ -207,7 +209,7 @@ struct muic_platform_data {
 	void (*cleanup_switch_dev_cb) (void);
 
 	/* muic GPIO control function */
-	int (*init_gpio_cb) (int switch_sel);
+	int (*init_gpio_cb) (void);
 	int (*set_gpio_usb_sel) (int usb_path);
 	int (*set_gpio_uart_sel) (int uart_path);
 	int (*set_safeout) (int safeout_path);

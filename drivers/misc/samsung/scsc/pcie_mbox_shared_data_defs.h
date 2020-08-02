@@ -52,4 +52,3 @@
 #define pcie_mbox_shared_data_wmb()             wmb()
 
 #endif /* __PCIE_MBOX_SHARED_DATA_DEFS_H */
-

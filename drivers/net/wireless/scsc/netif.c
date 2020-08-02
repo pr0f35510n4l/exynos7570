@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -8,6 +8,7 @@
 #include <linux/etherdevice.h>
 #include <linux/rtnetlink.h>
 #include <net/sch_generic.h>
+#include <linux/if_ether.h>
 
 #include "debug.h"
 #include "netif.h"
@@ -15,15 +16,55 @@
 #include "mgt.h"
 #include "scsc_wifi_fcq.h"
 #include "ioctl.h"
-#include "oxygen_ioctl.h"
 #include "mib.h"
 
-#define IP4_OFFSET_TO_TOS_FIELD 1
+#define IP4_OFFSET_TO_TOS_FIELD		1
+#define IP6_OFFSET_TO_TC_FIELD_0	0
+#define IP6_OFFSET_TO_TC_FIELD_1	1
+#define FIELD_TO_DSCP			2
+
+/* Define Ethertype SNMP and GSMP as they are not in if_ether */
+#ifndef ETH_P_SNMP
+#define ETH_P_SNMP	0x814C
+#endif
+#ifndef ETH_P_GSMP
+#define ETH_P_GSMP	0x880C
+#endif
+/* DSCP */
+/* (RFC2597) */
+#define DSCP_EF_PHB	0x2E
+#define DSCP_EF		0x2C
+#define DSCP_AF43	0x26
+#define DSCP_AF42	0x24
+#define DSCP_AF41	0x22
+#define DSCP_AF33	0x1E
+#define DSCP_AF32	0x1C
+#define DSCP_AF31	0x1A
+#define DSCP_AF23	0x16
+#define DSCP_AF22	0x14
+#define DSCP_AF21	0x12
+#define DSCP_AF13	0x0E
+#define DSCP_AF12	0x0C
+#define DSCP_AF11	0x0A
+/* (RFC2474) */
+#define CS7		0x38
+#define CS6		0x30
+#define CS5		0x28
+#define CS4		0x20
+#define CS3		0x18
+#define CS2		0x10
+#define CS1		0x08
+#define CS0		0x00
+
 #define SLSI_TX_WAKELOCK_TIME (100)
 
 static bool tcp_ack_suppression_disable;
 module_param(tcp_ack_suppression_disable, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(tcp_ack_suppression_disable, "Disable TCP ack suppression feature");
+
+static bool tcp_ack_suppression_disable_2g;
+module_param(tcp_ack_suppression_disable_2g, bool, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(tcp_ack_suppression_disable_2g, "Disable TCP ack suppression for only 2.4GHz band");
 
 static int tcp_ack_suppression_timeout = 16;
 module_param(tcp_ack_suppression_timeout, int, S_IRUGO | S_IWUSR);
@@ -56,6 +97,10 @@ MODULE_PARM_DESC(tcp_ack_suppression_adaptive_consecutive_max_acks, "Maximum num
 static int tcp_ack_suppression_adaptive_slow_start = 512;
 module_param(tcp_ack_suppression_adaptive_slow_start, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(tcp_ack_suppression_adaptive_slow_start, "Maximum number of Acks sent in slow start");
+
+static uint tcp_ack_suppression_rcv_window = 128;
+module_param(tcp_ack_suppression_rcv_window, uint, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(tcp_ack_suppression_rcv_window, "Receive window size (in unit of Kbytes) that triggers Ack suppression");
 
 /* Indicate WLAN firmware to send TCP ACK frames at specific TX rates. */
 static bool tcp_ack_robustness = true;
@@ -110,6 +155,8 @@ static int slsi_net_open(struct net_device *dev)
 		SLSI_ETHER_COPY(sdev->netdev_addresses[SLSI_NET_INDEX_P2PX], sdev->hw_addr);
 		sdev->netdev_addresses[SLSI_NET_INDEX_P2PX][0] |= 0x02; /* Set the local bit */
 		sdev->netdev_addresses[SLSI_NET_INDEX_P2PX][4] ^= 0x80; /* EXOR 5th byte with 0x80 */
+
+		sdev->initial_scan = true;
 	}
 
 	SLSI_ETHER_COPY(dev->dev_addr, sdev->netdev_addresses[ndev_vif->ifnum]);
@@ -117,7 +164,7 @@ static int slsi_net_open(struct net_device *dev)
 	SLSI_MUTEX_LOCK(ndev_vif->vif_mutex);
 	ndev_vif->is_available = true;
 	sdev->netdev_up_count++;
-	sdev->initial_scan = true;
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
 	reinit_completion(&ndev_vif->sig_wait.completion);
 #else
@@ -133,6 +180,7 @@ static int slsi_net_open(struct net_device *dev)
 	/* 2511 measn unifiForceActive and 1 means active */
 	if (slsi_is_rf_test_mode_enabled()) {
 		SLSI_NET_ERR(dev, "*#rf# rf test mode set is enabled.\n");
+		slsi_set_mib_roam(sdev, NULL, SLSI_PSID_UNIFI_ROAMING_ENABLED, 0);
 		slsi_set_mib_roam(sdev, NULL, SLSI_PSID_UNIFI_ROAM_MODE, 0);
 		slsi_set_mib_roam(sdev, NULL, 2511, 1);
 		slsi_set_mib_roam(sdev, NULL, SLSI_PSID_UNIFI_TPC_MAX_POWER_RSSI_THRESHOLD, 0);
@@ -182,19 +230,7 @@ static int slsi_net_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	SLSI_NET_DBG1(dev, SLSI_NETDEV, "ioctl cmd:0x%.4x\n", cmd);
 
 	if (cmd == SIOCDEVPRIVATE + 2) { /* 0x89f0 + 2 from wpa_supplicant */
-		int ret;
-
-		ret = slsi_ioctl(dev, rq, cmd);
-		return ret;
-	} else if (cmd == SIOCDEVPRIVATE + 1) { /* 0x89f0 + 1 from olsrd */
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-		int ret;
-
-		ret = oxygen_ioctl(dev, rq, cmd);
-		return ret;
-#else
-		return -EOPNOTSUPP;
-#endif
+		return slsi_ioctl(dev, rq, cmd);
 	}
 
 	return -EOPNOTSUPP;
@@ -208,27 +244,97 @@ static struct net_device_stats *slsi_net_get_stats(struct net_device *dev)
 	return &ndev_vif->stats;
 }
 
+#ifdef CONFIG_SCSC_USE_WMM_TOS
 static u16 slsi_get_priority_from_tos(u8 *frame, u16 proto)
 {
 	if (WARN_ON(!frame))
 		return FAPI_PRIORITY_QOS_UP0;
 
 	switch (proto) {
-	case 0x0800:    /* IPv4 */
-	case 0x814C:    /* SNMP */
-	case 0x880C:    /* GSMP */
+	case ETH_P_IP:    /* IPv4 */
+	case ETH_P_SNMP:  /* SNMP */
+	case ETH_P_GSMP:  /* GSMP */
 		return (u16)(((frame[IP4_OFFSET_TO_TOS_FIELD]) & 0xE0) >> 5);
 
-	case 0x8100:    /* VLAN */
+	case ETH_P_8021Q:    /* VLAN */
 		return (u16)((*frame & 0xE0) >> 5);
 
-	case 0x86DD:    /* IPv6 */
+	case ETH_P_IPV6:    /* IPv6 */
 		return (u16)((*frame & 0x0E) >> 1);
 
 	default:
 		return FAPI_PRIORITY_QOS_UP0;
 	}
 }
+
+#else
+static u16 slsi_get_priority_from_tos_dscp(u8 *frame, u16 proto)
+{
+	u8 dscp;
+
+	if (WARN_ON(!frame))
+		return FAPI_PRIORITY_QOS_UP0;
+
+	switch (proto) {
+	case ETH_P_IP:    /* IPv4 */
+	case ETH_P_SNMP:  /* SNMP */
+	case ETH_P_GSMP:  /* GSMP */
+		dscp = frame[IP4_OFFSET_TO_TOS_FIELD] >> FIELD_TO_DSCP;
+		break;
+
+	case ETH_P_8021Q:    /* VLAN */
+		return (u16)((*frame & 0xE0) >> 5);
+
+	case ETH_P_IPV6:    /* IPv6 */
+		/* Get traffic class */
+		dscp = (((frame[IP6_OFFSET_TO_TC_FIELD_0] & 0x0F) << 4) |
+			((frame[IP6_OFFSET_TO_TC_FIELD_1] & 0xF0) >> 4)) >> FIELD_TO_DSCP;
+		break;
+
+	default:
+		return FAPI_PRIORITY_QOS_UP0;
+	}
+
+	switch (dscp) {
+	case DSCP_EF_PHB:
+	case DSCP_EF:
+		return FAPI_PRIORITY_QOS_UP6;
+	case DSCP_AF43:
+	case DSCP_AF42:
+	case DSCP_AF41:
+		return FAPI_PRIORITY_QOS_UP5;
+	case DSCP_AF33:
+	case DSCP_AF32:
+	case DSCP_AF31:
+	case DSCP_AF23:
+	case DSCP_AF22:
+	case DSCP_AF21:
+	case DSCP_AF13:
+	case DSCP_AF12:
+	case DSCP_AF11:
+		return FAPI_PRIORITY_QOS_UP0;
+	case CS7:
+		return FAPI_PRIORITY_QOS_UP7;
+	case CS6:
+		return FAPI_PRIORITY_QOS_UP6;
+	case CS5:
+		return FAPI_PRIORITY_QOS_UP5;
+	case CS4:
+		return FAPI_PRIORITY_QOS_UP4;
+	case CS3:
+		return FAPI_PRIORITY_QOS_UP3;
+	case CS2:
+		return FAPI_PRIORITY_QOS_UP2;
+	case CS1:
+		return FAPI_PRIORITY_QOS_UP1;
+	case CS0:
+		return FAPI_PRIORITY_QOS_UP0;
+	default:
+		return FAPI_PRIORITY_QOS_UP0;
+	}
+}
+
+#endif
 
 static bool slsi_net_downgrade_ac(struct net_device *dev, struct sk_buff *skb)
 {
@@ -381,11 +487,15 @@ static u16 slsi_net_select_queue(struct net_device *dev, struct sk_buff *skb)
 		return SLSI_NETIF_Q_PRIORITY;
 	}
 
-	if (ndev_vif->vif_type == FAPI_VIFTYPE_AP || ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC)
+	if (ndev_vif->vif_type == FAPI_VIFTYPE_AP)
 		/* MULTICAST/BROADCAST Queue is only used for AP */
 		if (is_multicast_ether_addr(ehdr->h_dest)) {
 			SLSI_NET_DBG3(dev, SLSI_TX, "Multicast AC queue will be selected\n");
+#ifdef CONFIG_SCSC_USE_WMM_TOS
 			skb->priority = slsi_get_priority_from_tos(skb->data + ETH_HLEN, proto);
+#else
+			skb->priority = slsi_get_priority_from_tos_dscp(skb->data + ETH_HLEN, proto);
+#endif
 			return slsi_netif_get_multicast_queue(slsi_frame_priority_to_ac_queue(skb->priority));
 		}
 
@@ -404,7 +514,11 @@ static u16 slsi_net_select_queue(struct net_device *dev, struct sk_buff *skb)
 		} else
 #endif
 		{
+#ifdef CONFIG_SCSC_USE_WMM_TOS
 			skb->priority = slsi_get_priority_from_tos(skb->data + ETH_HLEN, proto);
+#else
+			skb->priority = slsi_get_priority_from_tos_dscp(skb->data + ETH_HLEN, proto);
+#endif
 		}
 	} else{
 		skb->priority = FAPI_PRIORITY_QOS_UP0;
@@ -887,7 +1001,6 @@ static int slsi_netif_add_locked(struct slsi_dev *sdev, const char *name, int if
 	struct netdev_vif   *ndev_vif;
 	struct wireless_dev *wdev;
 	int                 alloc_size, txq_count, ret;
-	int                 i;
 
 	WARN_ON(!SLSI_MUTEX_IS_LOCKED(sdev->netdev_add_remove_mutex));
 
@@ -992,11 +1105,6 @@ static int slsi_netif_add_locked(struct slsi_dev *sdev, const char *name, int if
 	}
 
 	wdev = &ndev_vif->wdev;
-
-	for (i = 0; i < SLSI_SCAN_MAX; i++) {
-		skb_queue_head_init(&ndev_vif->scan[i].scan_results[SLSI_SCAN_RESULT_WITH_SSID]);
-		skb_queue_head_init(&ndev_vif->scan[i].scan_results[SLSI_SCAN_RESULT_HIDDEN_SSID]);
-	}
 
 	dev->ieee80211_ptr = wdev;
 	wdev->wiphy = sdev->wiphy;
@@ -1160,11 +1268,12 @@ static void slsi_netif_remove_locked(struct slsi_dev *sdev, struct net_device *d
 	}
 
 	cancel_delayed_work(&ndev_vif->scan_timeout_work);
+	ndev_vif->scan[SLSI_SCAN_HW_ID].requeue_timeout_work = false;
 
 	slsi_skb_work_deinit(&ndev_vif->rx_data);
 	slsi_skb_work_deinit(&ndev_vif->rx_mlme);
 	for (i = 0; i < SLSI_SCAN_MAX; i++)
-		slsi_purge_scan_results(ndev_vif->scan[i].scan_results);
+		slsi_purge_scan_results(&ndev_vif->scan[i]);
 
 	slsi_kfree_skb(ndev_vif->sta.mlme_scan_ind_skb);
 	slsi_roam_channel_cache_prune(dev, 0);
@@ -1230,10 +1339,6 @@ int slsi_netif_pending_queues(int vif_type, struct net_device *dev)
 		for (i = 0; i < SLSI_AP_PEER_CONNECTIONS_MAX; i++)
 			for (tid = SLSI_NETIF_Q_PEER_START; tid < (SLSI_NETIF_Q_PEER_START + SLSI_NETIF_Q_PER_PEER); tid++)
 				len += skb_queue_len(&dev->_tx[tid].qdisc->q);
-	else if (vif_type == FAPI_VIFTYPE_ADHOC)
-		for (i = 0; i < SLSI_ADHOC_PEER_CONNECTIONS_MAX; i++)
-			for (tid = SLSI_NETIF_Q_PEER_START; tid < (SLSI_NETIF_Q_PEER_START + SLSI_NETIF_Q_PER_PEER); tid++)
-				len += skb_queue_len(&dev->_tx[tid].qdisc->q);
 
 	return len;
 }
@@ -1270,6 +1375,7 @@ static int slsi_netif_tcp_ack_suppression_start(struct net_device *dev)
 	ndev_vif->tack_timeout = 0;
 	ndev_vif->tack_dacks = 0;
 	ndev_vif->tack_sacks = 0;
+	ndev_vif->tack_low_window = 0;
 	ndev_vif->tack_nocache = 0;
 	ndev_vif->tack_norecord = 0;
 	ndev_vif->tack_hasdata = 0;
@@ -1349,6 +1455,41 @@ static void slsi_netif_tcp_ack_suppression_timeout(unsigned long data)
 	slsi_spinlock_unlock(&tcp_ack->lock);
 }
 
+static int slsi_netif_tcp_ack_suppression_option(struct sk_buff *skb, u32 option)
+{
+	unsigned char *options;
+	u32 optlen, len;
+
+	optlen = tcp_optlen(skb);
+	options = ((u8 *)tcp_hdr(skb)) + TCP_ACK_SUPPRESSION_OPTIONS_OFFSET;
+
+	while (optlen > 0) {
+		switch (options[0]) {
+		case TCP_ACK_SUPPRESSION_OPTION_EOL:
+			return 0;
+		case TCP_ACK_SUPPRESSION_OPTION_NOP:
+			len = 1;
+			break;
+		case TCP_ACK_SUPPRESSION_OPTION_WINDOW:
+			if (option == TCP_ACK_SUPPRESSION_OPTION_WINDOW)
+				return options[2];
+			len = 1;
+			break;
+		case TCP_ACK_SUPPRESSION_OPTION_SACK:
+			if (option == TCP_ACK_SUPPRESSION_OPTION_SACK)
+				return 1;
+			len = options[1];
+			break;
+		default:
+			len = options[1];
+			break;
+		}
+		optlen -= len;
+		options += len;
+	}
+	return 0;
+}
+
 static void slsi_netif_tcp_ack_suppression_syn(struct net_device *dev, struct sk_buff *skb)
 {
 	struct netdev_vif *ndev_vif = netdev_priv(dev);
@@ -1396,6 +1537,12 @@ static void slsi_netif_tcp_ack_suppression_syn(struct net_device *dev, struct sk
 				tcp_ack->age = tcp_ack_suppression_adaptive_timeout_max;
 			}
 			tcp_ack->last_sent = ktime_get();
+
+			/* read and validate the window scaling multiplier */
+			tcp_ack->window_scale_shift_count = slsi_netif_tcp_ack_suppression_option(skb, TCP_ACK_SUPPRESSION_OPTION_WINDOW);
+			if (tcp_ack->window_scale_shift_count > 14)
+				tcp_ack->window_scale_shift_count = 0;
+			SLSI_NET_DBG2(dev, SLSI_TX, "window shift count: %d\n", tcp_ack->window_scale_shift_count);
 			slsi_spinlock_unlock(&tcp_ack->lock);
 			return;
 		}
@@ -1432,32 +1579,6 @@ static void slsi_netif_tcp_ack_suppression_fin(struct net_device *dev, struct sk
 	}
 }
 
-static int slsi_netif_tcp_ack_suppression_sack(struct sk_buff *skb)
-{
-	unsigned char *options;
-	int optlen, len;
-
-	optlen = tcp_optlen(skb);
-	options = ((unsigned char *)tcp_hdr(skb)) + 20;
-
-	while (optlen > 0) {
-		switch (options[0]) {
-		case 0:
-		case 1:
-			len = 1;
-			break;
-		case 5:/* SACK */
-			return 1;
-		default:
-			len = options[1];
-			break;
-		}
-		optlen -= len;
-		options += len;
-	}
-	return 0;
-}
-
 static struct sk_buff *slsi_netif_tcp_ack_suppression_pkt(struct net_device *dev, struct sk_buff *skb)
 {
 	struct netdev_vif *ndev_vif = netdev_priv(dev);
@@ -1465,8 +1586,12 @@ static struct sk_buff *slsi_netif_tcp_ack_suppression_pkt(struct net_device *dev
 	struct slsi_tcp_ack_s *tcp_ack;
 	int forward_now = 0, flush = 0;
 	struct sk_buff *cskb = 0;
+	u32 tcp_recv_window_size = 0;
 
 	if (tcp_ack_suppression_disable)
+		return skb;
+
+	if (tcp_ack_suppression_disable_2g && !SLSI_IS_VIF_CHANNEL_5G(ndev_vif))
 		return skb;
 
 	/* Return skb that doesn't match. */
@@ -1587,8 +1712,20 @@ static struct sk_buff *slsi_netif_tcp_ack_suppression_pkt(struct net_device *dev
 	}
 
 	/* Do not suppress sacks. */
-	if (slsi_netif_tcp_ack_suppression_sack(skb)) {
+	if (slsi_netif_tcp_ack_suppression_option(skb, TCP_ACK_SUPPRESSION_OPTION_SACK)) {
 		ndev_vif->tack_sacks++;
+
+		/* A TCP selective Ack suggests TCP segment loss. The TCP sender
+		 * may reduce congestion window and limit the number of segments
+		 * it sends before waiting for Ack.
+		 * It is ideal to switch off TCP ack suppression for certain time
+		 * (being replicated here by tcp_ack_suppression_adaptive_slow_start
+		 * count) and send as many Acks as possible to allow the cwnd to
+		 * grow at the TCP sender
+		 */
+		tcp_ack->slow_start_count = 0;
+		tcp_ack->tcp_slow_start = true;
+
 		forward_now = 1;
 		goto _forward_now;
 	}
@@ -1607,6 +1744,24 @@ static struct sk_buff *slsi_netif_tcp_ack_suppression_pkt(struct net_device *dev
 		forward_now = 1;
 		goto _forward_now;
 	}
+
+	/* Do not suppress unless the receive window is large
+	 * enough.
+	 * With low receive window size the cwnd can't grow much.
+	 * So suppressing Acks has a negative impact on sender
+	 * rate as it increases the Round trip time measured at
+	 * sender
+	 */
+	if (tcp_ack->window_scale_shift_count)
+		tcp_recv_window_size = be16_to_cpu(tcp_hdr(skb)->window) * (2 << tcp_ack->window_scale_shift_count);
+	else
+		tcp_recv_window_size = be16_to_cpu(tcp_hdr(skb)->window);
+	if (tcp_recv_window_size < tcp_ack_suppression_rcv_window * 1024) {
+		ndev_vif->tack_low_window++;
+		forward_now = 1;
+		goto _forward_now;
+	}
+
 	if (ktime_to_ms(ktime_sub(ktime_get(), tcp_ack->last_sent)) >= tcp_ack->age) {
 		ndev_vif->tack_ktime++;
 		forward_now = 1;

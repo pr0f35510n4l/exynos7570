@@ -1,398 +1,240 @@
+/*
+* Samsung debugging features for Samsung's SoC's.
+*
+* Copyright (c) 2016 Samsung Electronics Co., Ltd.
+*      http://www.samsung.com
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*/
+
 #ifndef SEC_DEBUG_H
 #define SEC_DEBUG_H
 
-#include <linux/sched.h>
-#include <linux/semaphore.h>
+#include <linux/sizes.h>
+#include <linux/memblock.h>
+#include <linux/module.h>
+#include <linux/reboot.h>
+
+#define SEC_DEBUG_MAGIC_PA memblock_start_of_DRAM()
+#define SEC_DEBUG_MAGIC_VA phys_to_virt(SEC_DEBUG_MAGIC_PA)
+#define SEC_DEBUG_EXTRA_INFO_VA (SEC_DEBUG_MAGIC_VA + 0x400)
+#define SEC_DEBUG_DUMPER_LOG_VA (SEC_DEBUG_MAGIC_VA + 0x800)
 
 #ifdef CONFIG_SEC_DEBUG
-#define SEC_DEBUG_NAME		"sec_debug"
-#define SET_DEBUG_KEY(_key, _state) 	\
-{	\
-	.code = _key,	\
-	.state = _state,	\
-}
+extern int dynsyslog_on;
+extern int  sec_debug_setup(void);
+extern void sec_debug_reboot_handler(void);
+extern void sec_debug_panic_handler(void *buf, bool dump);
+extern void sec_debug_post_panic_handler(void);
 
-union sec_debug_level_t {
-	struct {
-		u16 kernel_fault;
-		u16 user_fault;
-	} en;
-	u32 uint_val;
+extern int  sec_debug_get_debug_level(void);
+extern void sec_debug_disable_printk_process(void);
+
+/* getlog support */
+extern void sec_getlog_supply_kernel(void *klog_buf);
+extern void sec_getlog_supply_platform(unsigned char *buffer, const char *name);
+extern void sec_gaf_supply_rqinfo(unsigned short curr_offset, unsigned short rq_offset);
+#else
+#define sec_debug_setup()			(-1)
+#define sec_debug_reboot_handler()		do { } while(0)
+#define sec_debug_panic_handler(a,b)		do { } while(0)
+#define sec_debug_post_panic_handler()		do { } while(0)
+
+#define sec_debug_get_debug_level()		(0)
+#define sec_debug_disable_printk_process()	do { } while(0)
+
+#define sec_getlog_supply_kernel(a)		do { } while(0)
+#define sec_getlog_supply_platform(a,b)		do { } while(0)
+
+#define sec_gaf_supply_rqinfo(a,b)		do { } while(0)
+#endif /* CONFIG_SEC_DEBUG */
+
+#ifdef CONFIG_SEC_DEBUG_MDM_SEPERATE_CRASH
+extern int  sec_debug_is_enabled_for_ssr(void);
+else
+#define sec_debug_is_enabled_for_ssr()		(0)
+#endif /* CONFIG_SEC_DEBUG_MDM_SEPERATE_CRASH */
+
+#ifdef CONFIG_SEC_DEBUG_RESET_REASON
+
+enum sec_debug_reset_reason_t {
+	RR_S = 1,
+	RR_W = 2,
+	RR_D = 3,
+	RR_K = 4,
+	RR_M = 5,
+	RR_P = 6,
+	RR_R = 7,
+	RR_B = 8,
+	RR_N = 9,
+	RR_T = 10,
 };
 
-struct input_debug_key_state {
-	bool state;
-	u32 code;
+extern unsigned reset_reason;
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+
+#define MAX_EXTRA_INFO_HDR_LEN	6
+#define MAX_EXTRA_INFO_KEY_LEN	16
+#define MAX_EXTRA_INFO_VAL_LEN	256
+#define SEC_DEBUG_BADMODE_MAGIC	0x6261646d
+
+enum sec_debug_extra_buf_type {
+	INFO_KTIME,
+	INFO_FAULT,
+	INFO_BUG,
+	INFO_PANIC,
+	INFO_PC,
+	INFO_LR,
+	INFO_STACK,
+	INFO_REASON,
+	INFO_EVT,
+	INFO_SYSMMU,
+	INFO_BUSMON,
+	INFO_DPM,
+	INFO_SMPL,
+	INFO_SLUB,
+	INFO_ESR,
+	INFO_MERR,
+	INFO_PCB,
+	INFO_SMD,
+	INFO_CHI,
+	INFO_LPI,
+	INFO_CDI,
+	INFO_KLG,
+	INFO_LR0,
+	INFO_LEVEL,
+	INFO_DECON,
+	INFO_MAX,
 };
 
-struct input_debug_pdata {
-	struct input_debug_key_state *key_state;
-	int nkeys;
+struct sec_debug_extra_info_item {
+	char key[MAX_EXTRA_INFO_KEY_LEN];
+	char val[MAX_EXTRA_INFO_VAL_LEN];
+	unsigned int max;
 };
 
-#ifdef CONFIG_SEC_DEBUG_SUBSYS
-
-#define SEC_DEBUG_SUBSYS_MAGIC0 0xFFFFFFFF
-#define SEC_DEBUG_SUBSYS_MAGIC1 0x5ECDEB6
-#define SEC_DEBUG_SUBSYS_MAGIC2 0x14F014F0
- /* high word : major version
-  * low word : minor version
-  * minor version changes should not affect bootloader behavior
-  */
-#define SEC_DEBUG_SUBSYS_MAGIC3 0x00010001
-
-struct __log_struct_info {
-	unsigned int buffer_offset;
-	unsigned int w_off_offset;
-	unsigned int head_offset;
-	unsigned int size_offset;
-	unsigned int size_t_typesize;
+struct sec_debug_panic_extra_info {
+	struct sec_debug_extra_info_item item[INFO_MAX];
 };
 
-struct __log_data {
-	unsigned int log_paddr;
-	unsigned int buffer_paddr;
+#endif
+
+#if 1	/* TODO : MOVE IT LATER */
+
+#define SEC_DEBUG_SHARED_MAGIC0 0xFFFFFFFF
+#define SEC_DEBUG_SHARED_MAGIC1 0x95308180
+#define SEC_DEBUG_SHARED_MAGIC2 0x14F014F0
+#define SEC_DEBUG_SHARED_MAGIC3 0x00010001
+
+struct sec_debug_ksyms {
+	uint32_t magic;
+	uint32_t kallsyms_all;
+	uint64_t addresses_pa;
+	uint64_t names_pa;
+	uint64_t num_syms;
+	uint64_t token_table_pa;
+	uint64_t token_index_pa;
+	uint64_t markers_pa;
+	uint64_t sinittext;
+	uint64_t einittext;
+	uint64_t stext;
+	uint64_t etext;
+	uint64_t end;
 };
 
-struct sec_debug_subsys_log {
-	unsigned int idx_paddr;
-	unsigned int log_paddr;
-	unsigned int size;
-};
-
-struct sec_debug_subsys_logger_log_info {
-	struct __log_struct_info stinfo;
-	struct __log_data main;
-	struct __log_data system;
-	struct __log_data events;
-	struct __log_data radio;
-};
-
-struct sec_debug_subsys_excp_kernel {
-	char pc_sym[64];
-	char lr_sym[64];
-	char panic_caller[64];
-	char panic_msg[128];
-	char thread[32];
-};
-
-struct sec_debug_subsys_sched_log {
-	unsigned int task_idx_paddr;
-	unsigned int task_buf_paddr;
-	unsigned int task_struct_sz;
-	unsigned int task_array_cnt;
-	unsigned int irq_idx_paddr;
-	unsigned int irq_buf_paddr;
-	unsigned int irq_struct_sz;
-	unsigned int irq_array_cnt;
-	unsigned int work_idx_paddr;
-	unsigned int work_buf_paddr;
-	unsigned int work_struct_sz;
-	unsigned int work_array_cnt;
-	unsigned int timer_idx_paddr;
-	unsigned int timer_buf_paddr;
-	unsigned int timer_struct_sz;
-	unsigned int timer_array_cnt;
-};
-
-struct sec_debug_subsys_cpufreq_policy {
-	unsigned int paddr;
-	int name_length;
-	int min_offset;
-	int max_offset;
-	int cur_offset;
-};
-
-struct sec_debug_subsys_cpu_info {
-	struct sec_debug_subsys_cpufreq_policy cpufreq_policy;
-	unsigned int cpu_offset_paddr;
-	unsigned int cpu_active_mask_paddr;
-	unsigned int cpu_online_mask_paddr;
-};
-
-struct sec_debug_subsys_data_kernel {
-	char name[16];
-	char state[16];
-	int nr_cpus;
-	//int sched_log_max;
-	//unsigned int sec_debug_log;
-
-	struct sec_debug_subsys_log log;
-	struct sec_debug_subsys_excp_kernel excp;
-	//struct sec_debug_subsys_simple_var_mon var_mon;
-	//struct sec_debug_subsys_simple_var_mon info_mon;
-	//struct tzbsp_dump_buf_s **tz_core_dump;
-	//struct sec_debug_subsys_fb fb_info;
-	struct sec_debug_subsys_sched_log sched_log;
-	struct sec_debug_subsys_logger_log_info logger_log;
-	//struct sec_debug_subsys_avc_log avc_log;
-	struct sec_debug_subsys_cpu_info cpu_info;
-
-	unsigned int cmdline_paddr;
-	unsigned int cmdline_len;
-	unsigned int linuxbanner_paddr;
-	unsigned int linuxbanner_len;
-};
-
-struct sec_debug_subsys {
+struct sec_debug_shared_info {
+	/* initial magic code */	
 	unsigned int magic[4];
 
-	struct sec_debug_subsys_data_kernel kernel;
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO	
+	/* ksymbol information */
+	struct sec_debug_ksyms ksyms;
 
-	unsigned int log_kernel_base;
-	unsigned int log_kernel_start;
+	/* reset reason extra info for bigdata */
+	struct sec_debug_panic_extra_info sec_debug_extra_info;
 
-	unsigned int reserved_out_buf;
-	unsigned int reserved_out_size;
-};
-extern int sec_debug_subsys_set_logger_info(
-	struct sec_debug_subsys_logger_log_info *log_info);
-int sec_debug_save_die_info(const char *str, struct pt_regs *regs);
-int sec_debug_save_panic_info(const char *str, unsigned int caller);
-int sec_debug_set_cpu_info(struct sec_debug_subsys *subsys_info, char *subsys_log_buf);
-#endif
-
-extern union sec_debug_level_t sec_debug_level;
-
-extern int sec_debug_init(void);
-
-extern int sec_debug_dump_stack(void);
-
-extern int sec_debug_magic_init(void);
-
-extern void sec_debug_memblock_reserve(void);
-
-extern void sec_debug_check_crash_key(unsigned int code, int value);
-
-extern void sec_getlog_supply_fbinfo(void *p_fb, u32 res_x, u32 res_y, u32 bpp,
-				     u32 frames);
-extern void sec_getlog_supply_loggerinfo(unsigned char *buffer, const char *name);
-extern void sec_getlog_supply_kloginfo(void *klog_buf);
-
-extern void sec_gaf_supply_rqinfo(unsigned short curr_offset,
-				  unsigned short rq_offset);
-
-extern void register_log_char_hook(void (*f) (char c));
-
-extern void sec_debug_save_context(void);
-#else
-
-extern void register_log_char_hook(void (*f) (char c));
-
-static inline int sec_debug_init(void)
-{
-	return 0;
-}
-
-static inline int sec_debug_dump_stack(void)
-{
-	return 0;
-}
-
-static inline int sec_debug_magic_init(void)
-{
-	return 0;
-}
-
-static inline void sec_debug_check_crash_key(unsigned int code, int value)
-{
-	return;
-}
-
-static inline void sec_getlog_supply_fbinfo(void *p_fb, u32 res_x, u32 res_y,
-					    u32 bpp, u32 frames)
-{
-	return;
-}
-
-static inline void sec_getlog_supply_meminfo(u32 size0, u32 addr0, u32 size1,
-					     u32 addr1)
-{
-	return;
-}
-
-static inline void sec_getlog_supply_loggerinfo(void *p_main,
-						const char *name)
-{
-	return;
-}
-
-static inline void sec_getlog_supply_kloginfo(void *klog_buf)
-{
-	return;
-}
-
-static inline void sec_gaf_supply_rqinfo(unsigned short curr_offset,
-					 unsigned short rq_offset)
-{
-	return;
-}
-
-static inline void sec_debug_save_context(void)
-{
-}
-
-#endif
-
-struct worker;
-struct work_struct;
-
-#ifdef CONFIG_SEC_DEBUG_SCHED_LOG
-extern void __sec_debug_task_log(int cpu, struct task_struct *task, char *msg);
-extern void __sec_debug_irq_log(unsigned int irq, void *fn, int en);
-extern void __sec_debug_work_log(struct worker *worker,
-				 struct work_struct *work, work_func_t f, int en);
-#ifdef CONFIG_SEC_DEBUG_TIMER_LOG
-extern void __sec_debug_timer_log(unsigned int type, void *fn);
-#endif
-
-static inline void sec_debug_task_log(int cpu, struct task_struct *task)
-{
-	if (unlikely(sec_debug_level.en.kernel_fault))
-		__sec_debug_task_log(cpu, task, NULL);
-}
-
-static inline void sec_debug_task_log_msg(int cpu, char *msg)
-{
-	if (unlikely(sec_debug_level.en.kernel_fault))
-		__sec_debug_task_log(cpu, NULL, msg);
-}
-
-static inline void sec_debug_irq_log(unsigned int irq, void *fn, int en)
-{
-	if (unlikely(sec_debug_level.en.kernel_fault))
-		__sec_debug_irq_log(irq, fn, en);
-}
-
-static inline void sec_debug_work_log(struct worker *worker,
-				      struct work_struct *work, work_func_t f, int en)
-{
-	if (unlikely(sec_debug_level.en.kernel_fault))
-		__sec_debug_work_log(worker, work, f, en);
-}
-
-#ifdef CONFIG_SEC_DEBUG_TIMER_LOG
-static inline void sec_debug_timer_log(unsigned int type, void *fn)
-{
-	if (unlikely(sec_debug_level.en.kernel_fault))
-		__sec_debug_timer_log(type, fn);
-}
-#else
-static inline void sec_debug_timer_log(unsigned int type, void *fn)
-{
-}
-#endif
-
-#ifdef CONFIG_SEC_DEBUG_SOFTIRQ_LOG
-static inline void sec_debug_softirq_log(unsigned int irq, void *fn, int en)
-{
-	if (unlikely(sec_debug_level.en.kernel_fault))
-		__sec_debug_irq_log(irq, fn, en);
-}
-#else
-static inline void sec_debug_softirq_log(unsigned int irq, void *fn, int en)
-{
-}
-#endif
-#else
-static inline void sec_debug_task_log(int cpu, struct task_struct *task)
-{
-}
-
-static inline void sec_debug_task_log_msg(int cpu, char *msg)
-{
-}
-
-static inline void sec_debug_irq_log(unsigned int irq, void *fn, int en)
-{
-}
-
-static inline void sec_debug_work_log(struct worker *worker,
-				      struct work_struct *work, work_func_t f, int en)
-{
-}
-
-static inline void sec_debug_timer_log(unsigned int type, void *fn)
-{
-}
-
-static inline void sec_debug_softirq_log(unsigned int irq, void *fn, int en)
-{
-}
-#endif
-
-#ifdef CONFIG_SEC_DEBUG_IRQ_EXIT_LOG
-extern void sec_debug_irq_last_exit_log(void);
-#else
-static inline void sec_debug_irq_last_exit_log(void)
-{
-}
-#endif
-
-#ifdef CONFIG_SEC_DEBUG_SEMAPHORE_LOG
-extern void debug_semaphore_init(void);
-extern void debug_semaphore_down_log(struct semaphore *sem);
-extern void debug_semaphore_up_log(struct semaphore *sem);
-extern void debug_rwsemaphore_init(void);
-extern void debug_rwsemaphore_down_log(struct rw_semaphore *sem, int dir);
-extern void debug_rwsemaphore_up_log(struct rw_semaphore *sem);
-#define debug_rwsemaphore_down_read_log(x) \
-	debug_rwsemaphore_down_log(x, READ_SEM)
-#define debug_rwsemaphore_down_write_log(x) \
-	debug_rwsemaphore_down_log(x, WRITE_SEM)
-#else
-static inline void debug_semaphore_init(void)
-{
-}
-
-static inline void debug_semaphore_down_log(struct semaphore *sem)
-{
-}
-
-static inline void debug_semaphore_up_log(struct semaphore *sem)
-{
-}
-
-static inline void debug_rwsemaphore_init(void)
-{
-}
-
-static inline void debug_rwsemaphore_down_read_log(struct rw_semaphore *sem)
-{
-}
-
-static inline void debug_rwsemaphore_down_write_log(struct rw_semaphore *sem)
-{
-}
-
-static inline void debug_rwsemaphore_up_log(struct rw_semaphore *sem)
-{
-}
-#endif
-enum sec_debug_aux_log_idx {
-	SEC_DEBUG_AUXLOG_CPU_BUS_CLOCK_CHANGE,
-	SEC_DEBUG_AUXLOG_THERMAL_CHANGE,
-	SEC_DEBUG_AUXLOG_ITEM_MAX,
+	/* last 1KB of kernel log */
+	char last_klog[SZ_1K];
+#endif	
 };
 
-#ifdef CONFIG_SEC_DEBUG_AUXILIARY_LOG
-extern void sec_debug_aux_log(int idx, char *fmt, ...);
-#else
-#define sec_debug_aux_log(idx, ...) do { } while (0)
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+extern void sec_debug_set_kallsyms_info(struct sec_debug_shared_info *sec_debug_info);
 #endif
 
+#endif	/* TODO : MOVE IT LATER */
+
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+
+extern unsigned long merr_symptom;
+extern struct exynos_chipid_info exynos_soc_info;
+extern unsigned int get_smpl_warn_number(void);
+
+extern void sec_debug_init_extra_info(struct sec_debug_shared_info *);
+extern void sec_debug_finish_extra_info(void);
+extern void sec_debug_store_extra_info(void);
+extern void sec_debug_set_extra_info_ktime(void);
+extern void sec_debug_set_extra_info_fault(unsigned long addr, struct pt_regs *regs);
+extern void sec_debug_set_extra_info_bug(const char *file, unsigned int line);
+extern void sec_debug_set_extra_info_panic(char *str);
+extern void sec_debug_set_extra_info_backtrace(struct pt_regs *regs);
+extern void sec_debug_set_extra_info_evt_version(void);
+extern void sec_debug_set_extra_info_sysmmu(char *str);
+extern void sec_debug_set_extra_info_busmon(char *str);
+extern void sec_debug_set_extra_info_dpm_timeout(char *devname);
+extern void sec_debug_set_extra_info_smpl(unsigned int count);
+extern void sec_debug_set_extra_info_slub_error(char *cachename);
+extern void sec_debug_set_extra_info_esr(unsigned int esr);
+extern void sec_debug_set_extra_info_merr(void);
+extern void sec_debug_set_extra_info_decon(unsigned int err);
+#endif /* CONFIG_SEC_DEBUG_EXTRA_INFO */
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_SUMMARY
+extern void sec_debug_auto_summary_log_disable(int type);
+extern void sec_debug_auto_summary_log_once(int type);
+extern void register_set_auto_comm_buf(void (*func)(int type, const char *buf, size_t size));
+extern void register_set_auto_comm_lastfreq(void (*func)(int type, int old_freq, int new_freq, u64 time));
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_LAST_KMSG
+#define SEC_LKMSG_MAGICKEY 0x0000000a6c6c7546
+extern void sec_debug_save_last_kmsg(unsigned char *head_ptr, unsigned char *curr_ptr, size_t buf_size);
+#else
+#define sec_debug_save_last_kmsg(a, b, c)		do { } while (0)
+#endif /* CONFIG_SEC_DEBUG_LAST_KMSG */
+
+/*
+ * Samsung TN Logging Options
+ */
 #ifdef CONFIG_SEC_AVC_LOG
 extern void sec_debug_avc_log(char *fmt, ...);
-#endif
+#else
+#define sec_debug_avc_log(a, ...)		do { } while (0)
+#endif /* CONFIG_SEC_AVC_LOG */
+
+/**
+ * sec_debug_tsp_log : Leave tsp log in tsp_msg file.
+ * ( Timestamp + Tsp logs )
+ * sec_debug_tsp_log_msg : Leave tsp log in tsp_msg file and
+ * add additional message between timestamp and tsp log.
+ * ( Timestamp + additional Message + Tsp logs )
+ */
 #ifdef CONFIG_SEC_DEBUG_TSP_LOG
 extern void sec_debug_tsp_log(char *fmt, ...);
+extern void sec_debug_tsp_log_msg(char *msg, char *fmt, ...);
+#ifdef CONFIG_TOUCHSCREEN_FTS
+extern void tsp_dump(void);
 #endif
+#else
+#define sec_debug_tsp_log(a, ...)		do { } while (0)
+#define sec_debug_tsp_log_msg(a, b, ...)	do { } while (0)
+#endif /* CONFIG_SEC_DEBUG_TSP_LOG */
 
-#ifdef CONFIG_SEC_DEBUG_CHECK_TASKPTR_FAULT
-extern void sec_debug_show_regs_simple(struct pt_regs *regs);
-extern void sec_debug_panic_handler_safe(struct pt_regs *regs);
-#endif
+extern int sec_debug_force_error(const char *val, struct kernel_param *kp);
 
-extern void read_lcd_register(void);
-
-#endif				/* SEC_DEBUG_H */
+#endif /* SEC_DEBUG_H */

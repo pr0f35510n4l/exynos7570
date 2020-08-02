@@ -29,15 +29,6 @@ enum {
 	DSIM_LANE_DATA3	= (1 << 4),
 };
 
-/* define DSI escape clock types. */
-enum {
-	DSIM_ESCCLK_CLOCK = (1 << 4),
-	DSIM_ESCCLK_DATA0 = (1 << 0),
-	DSIM_ESCCLK_DATA1 = (1 << 1),
-	DSIM_ESCCLK_DATA2 = (1 << 2),
-	DSIM_ESCCLK_DATA3 = (1 << 3),
-};
-
 /* DSI Error report bit definitions */
 enum {
 	MIPI_DSI_ERR_SOT			= (1 << 0),
@@ -63,6 +54,16 @@ enum {
 	 * ULPS enter/exit sequence during power-gating */
 	/* Bit [14] is reserved */
 };
+
+/* define DSI escape clock types. */
+enum {
+	DSIM_ESCCLK_CLOCK = (1 << 4),
+	DSIM_ESCCLK_DATA0 = (1 << 0),
+	DSIM_ESCCLK_DATA1 = (1 << 1),
+	DSIM_ESCCLK_DATA2 = (1 << 2),
+	DSIM_ESCCLK_DATA3 = (1 << 3),
+};
+
 
 struct dsim_pll_param {
 	u32 p;
@@ -183,7 +184,7 @@ void dsim_reg_enable_qchannel(u32 id, u32 en);
 int dsim_reg_wait_hs_clk_ready(u32 id);
 void dsim_reg_set_fifo_ctrl(u32 id, u32 cfg);
 void dsim_reg_force_dphy_stop_state(u32 id, u32 en);
-void dsim_reg_wr_tx_header(u32 id, u32 data_id, unsigned long data0, u32 data1);
+void dsim_reg_wr_tx_header(u32 id, u32 data_id, u32 data0, u32 data1);
 void dsim_reg_wr_tx_payload(u32 id, u32 payload);
 void dsim_reg_enter_ulps(u32 id, u32 enter);
 void dsim_reg_exit_ulps(u32 id, u32 exit);
@@ -191,7 +192,6 @@ int dsim_reg_set_ulps_by_ddi(u32 id, u32 ddi_type, u32 lanes, u32 en);
 int dsim_reg_wait_enter_ulps_state(u32 id, u32 lanes);
 int dsim_reg_wait_exit_ulps_state(u32 id);
 void dsim_reg_set_standby(u32 id, u32 en);
-void dsim_reg_change_cmd_transfer_mode(u32 id, u32 lp);
 void dsim_reg_set_bist(u32 id, u32 en, u32 vfp, u32 format, u32 type);
 void dsim_reg_set_packet_ctrl(u32 id);
 void dsim_reg_enable_loopback(u32 id, u32 en);

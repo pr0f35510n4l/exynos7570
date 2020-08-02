@@ -43,6 +43,11 @@
 #include <soc/samsung/asv-exynos.h>
 #include <soc/samsung/tmu.h>
 #include <soc/samsung/ect_parser.h>
+#include <trace/events/exynos.h>
+
+#ifdef CONFIG_SEC_EXT
+#include <linux/sec_ext.h>
+#endif
 
 #define VOLT_RANGE_STEP		25000
 #define CLUSTER_ID(cl)		(cl ? ID_CL1 : ID_CL0)
@@ -548,9 +553,11 @@ static int exynos_target(struct cpufreq_policy *policy,
 				__func__, cur, target_freq, index);
 
 	exynos_ss_freq(cur, freqs[cur]->old, target_freq, ESS_FLAG_IN);
+	trace_exynos_freq_in(cur, freqs[cur]->old);
 	/* frequency and volt scaling */
 	ret = exynos_cpufreq_scale(target_freq, policy->cpu);
 	exynos_ss_freq(cur, freqs[cur]->old, target_freq, ESS_FLAG_OUT);
+	trace_exynos_freq_out(cur, target_freq);
 	if (ret < 0)
 		goto out;
 

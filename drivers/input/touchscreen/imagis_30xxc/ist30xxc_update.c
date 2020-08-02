@@ -29,15 +29,6 @@
 #include "ist30xxc_update.h"
 #include "ist30xxc_tracking.h"
 
-#if IST30XX_INTERNAL_BIN
-#if defined(CONFIG_SEC_NOVEL_PROJECT)
-#include "ist3026c_novel_fw_BOE.h"
-#include "ist3026c_novel_fw_CNI.h"
-#else
-static unsigned char ist30xxc_fw[] = {0};
-#endif
-#endif  // IST30XX_INTERNAL_BIN
-
 #define TAGS_PARSE_OK		(0)
 
 // ISP burst r/w
@@ -361,34 +352,6 @@ int ist30xxc_read_chksum_all(struct i2c_client *client, u32 *chksum)
 	return 0;
 }
 
-int ist30xxc_isp_info_read(struct ist30xx_data *data, u32 addr, u32 *buf32, u32 len)
-{
-	int ret = 0;
-	int retry = IST30XX_MAX_RETRY_CNT;
-
-isp_info_read_retry:
-	if (retry-- == 0)
-	         goto isp_info_read_end;
-
-	ist30xx_reset(data, true);
-
-	/* IST30xxB ISP enable */
-	ret = ist30xxc_isp_enable(data->client, true);
-	if (unlikely(ret))
-	         goto isp_info_read_retry;
-
-	ret = ist30xxc_isp_read(data->client, addr, IST30XX_ISP_READ_INFO_B,
-		buf32, len);
-	if (unlikely(ret))
-	         goto isp_info_read_retry;
-
-isp_info_read_end:
-	/* IST30xxC ISP disable */
-	ist30xxc_isp_enable(data->client, false);
-	ist30xx_reset(data, false);
-	return ret;
-}
-
 int ist30xxc_isp_fw_read(struct ist30xx_data *data, u32 *buf32)
 {
 	int ret = 0;
@@ -640,12 +603,12 @@ int ist30xx_parse_tags(struct ist30xx_data *data, const u8 *buf, const u32 size)
 int ist30xx_get_update_info(struct ist30xx_data *data, const u8 *buf,
 			     const u32 size)
 {
-	int ret = 0;
-#if 0
+	int ret;
+
 	ret = ist30xx_parse_tags(data, buf, size);
 	if (unlikely(ret != TAGS_PARSE_OK))
 		tsp_warn("Cannot find tags of F/W, make a tags by 'tagts.exe'\n");
-#endif
+
     return ret;
 }
 
@@ -837,17 +800,15 @@ int ist30xx_get_tsp_info(struct ist30xx_data *data)
 #if IST30XX_USE_KEY
 	tkey->enable = (bool)(cfg_buf[0x15] & 1);
 	tkey->key_num = (u8)cfg_buf[0x16];
-
 	tkey->ch_num[0].tx = (u8)cfg_buf[0x1A];
-	tkey->ch_num[1].tx = (u8)cfg_buf[0x1B];
-	tkey->ch_num[2].tx = (u8)cfg_buf[0x1C];
-	tkey->ch_num[3].tx = (u8)cfg_buf[0x1D];
-	tkey->ch_num[4].tx = (u8)cfg_buf[0x1E];
-
 	tkey->ch_num[0].rx = (u8)cfg_buf[0x1F];
+	tkey->ch_num[1].tx = (u8)cfg_buf[0x1B];
 	tkey->ch_num[1].rx = (u8)cfg_buf[0x20];
+	tkey->ch_num[2].tx = (u8)cfg_buf[0x1C];
 	tkey->ch_num[2].rx = (u8)cfg_buf[0x21];
+	tkey->ch_num[3].tx = (u8)cfg_buf[0x1D];
 	tkey->ch_num[3].rx = (u8)cfg_buf[0x22];
+	tkey->ch_num[4].tx = (u8)cfg_buf[0x1E];
 	tkey->ch_num[4].rx = (u8)cfg_buf[0x23];
 
 	tkey->baseline = (u16)((cfg_buf[0x19] << 8) | cfg_buf[0x18]);
@@ -856,7 +817,7 @@ int ist30xx_get_tsp_info(struct ist30xx_data *data)
 		release_firmware(firmware);
 		fw->buf = NULL;
 	}
-#endif
+#endif    
 
 	return ret;
 }
@@ -946,13 +907,13 @@ int ist30xx_fw_recovery(struct ist30xx_data *data)
 	ret = ist30xx_get_update_info(data, fw, fw_size);
 	if (ret) {
         data->status.update_result = 1;
-		return ret;
+        return ret;
     }
 
 	data->fw.bin.main_ver = ist30xx_parse_ver(data, FLAG_MAIN, fw);
 	data->fw.bin.fw_ver = ist30xx_parse_ver(data, FLAG_FW, fw);
 	data->fw.bin.test_ver = ist30xx_parse_ver(data, FLAG_TEST, fw);
-	data->fw.bin.core_ver = ist30xx_parse_ver(data, FLAG_CORE, fw);
+    data->fw.bin.core_ver = ist30xx_parse_ver(data, FLAG_CORE, fw);
 
 	mutex_lock(&ist30xx_mutex);
 	ret = ist30xx_fw_update(data, fw, fw_size);
@@ -1014,7 +975,7 @@ bool ist30xx_check_valid_vendor(u32 tsp_vendor)
 	return false;
 }
 
-#if (IMAGIS_TSP_IC < IMAGIS_IST3038C)
+#if defined(CONFIG_TOUCHSCREEN_IST3026C)	//novel
 #if IST30XX_MULTIPLE_TSP
 void ist30xx_set_tsp_fw(struct ist30xx_data *data)
 {
@@ -1072,26 +1033,13 @@ int ist30xx_check_auto_update(struct ist30xx_data *data)
 
 	ist30xx_get_ver_info(data);
 
-/* Temp Code : Force firmware update for wrong firmware written case */
-#if defined(CONFIG_SEC_NOVEL_PROJECT)
-	if (data->chip_id != IST30XX_CHIP_ID) {
-		tsp_info("The wrong firmware(IC : %x). Force firmware update.\n", data->chip_id);
-		goto fw_check_end;
-	}
-#endif
-
-	if (data->dt_data->extra_string)
-		tsp_info("%s: %s, cur:%d, bin:%d\n",
-						__func__, data->dt_data->extra_string,
-						fw->cur.fw_ver, fw->bin.fw_ver);
-
 	if (likely((fw->cur.fw_ver > 0) && (fw->cur.fw_ver < 0xFFFFFFFF))) {
 		if (unlikely(((fw->cur.main_ver & MAIN_VER_MASK) == MAIN_VER_MASK) ||
 			     ((fw->cur.main_ver & MAIN_VER_MASK) == 0)))
 			goto fw_check_end;
 
-		tsp_info("Version compare IC: %x(%x), BIN: %x(%x)\n", fw->cur.fw_ver,
-			fw->cur.main_ver, fw->bin.fw_ver, fw->bin.main_ver);
+		tsp_info("Version compare IC: %x(%x), BIN: %x(%x)\n", fw->cur.fw_ver, 
+                fw->cur.main_ver, fw->bin.fw_ver, fw->bin.main_ver);
 
 		/* If FW version is same, check FW checksum */
 		if (likely((fw->cur.main_ver == fw->bin.main_ver) &&
@@ -1137,12 +1085,13 @@ int ist30xx_auto_bin_update(struct ist30xx_data *data)
 
 		fw->buf = (u8 *)firmware->data;
 		fw->buf_size = firmware->size;
-	} else {
+	}
+#if defined(CONFIG_TOUCHSCREEN_IST3026C)	//novel
+	else {
 		fw->buf = (u8 *)ist30xxc_fw;
 		fw->buf_size = sizeof(ist30xxc_fw);
 	}
 
-#if (IMAGIS_TSP_IC < IMAGIS_IST3038C)
 #if IST30XX_MULTIPLE_TSP
 	ist30xx_set_tsp_fw(data);
 #endif
@@ -1165,12 +1114,6 @@ int ist30xx_auto_bin_update(struct ist30xx_data *data)
 	mutex_lock(&ist30xx_mutex);
 	ret = ist30xx_check_auto_update(data);
 	mutex_unlock(&ist30xx_mutex);
-
-	if (data->dt_data->bringup) {
-		tsp_info("%s: bring up! do not update firmware.\n", __func__);
-		ret = 0;
-		goto release_fw;
-	}
 
 	if (likely(ret >= 0))
 		goto release_fw;
@@ -1238,7 +1181,7 @@ ssize_t ist30xx_fw_store(struct device *dev, struct device_attribute *attr,
 		fw = data->fw.buf;
 		fw_size = data->fw.buf_size;
 #else
-		data->status.update_result = 1;
+        data->status.update_result = 1;
 		tsp_warn("Not support internal bin!!\n");
 		return size;
 #endif
@@ -1248,7 +1191,7 @@ ssize_t ist30xx_fw_store(struct device *dev, struct device_attribute *attr,
 		ret = request_firmware(&request_fw, IST30XX_FW_NAME,
 				       &data->client->dev);
 		if (ret) {
-			data->status.update_result = 1;
+            data->status.update_result = 1;
 			tsp_warn("File not found, %s\n", IST30XX_FW_NAME);
 			return size;
 		}
@@ -1267,7 +1210,7 @@ ssize_t ist30xx_fw_store(struct device *dev, struct device_attribute *attr,
 		fp = filp_open(fw_path, O_RDONLY, 0);
 		if (IS_ERR(fp)) {
 			data->status.update_result = 1;
-			tsp_info("file %s open error:%d\n", fw_path, fp);
+			tsp_info("file %s open error\n", fw_path);
 			goto err_file_open;
 		}
 
@@ -1317,20 +1260,20 @@ ssize_t ist30xx_fw_store(struct device *dev, struct device_attribute *attr,
 
 	ret = ist30xx_get_update_info(data, fw, fw_size);
 	if (ret) {
-		data->status.update_result = 1;
+        data->status.update_result = 1;
 		goto err_get_info;
-	}
+    }
 
 	data->fw.bin.main_ver = ist30xx_parse_ver(data, FLAG_MAIN, fw);
 	data->fw.bin.fw_ver = ist30xx_parse_ver(data, FLAG_FW, fw);
 	data->fw.bin.test_ver = ist30xx_parse_ver(data, FLAG_TEST, fw);
-	data->fw.bin.core_ver = ist30xx_parse_ver(data, FLAG_CORE, fw);
+    data->fw.bin.core_ver = ist30xx_parse_ver(data, FLAG_CORE, fw);
 
 	mutex_lock(&ist30xx_mutex);
 	ret = ist30xx_fw_update(data, fw, fw_size);
 	if (ret == 0) {
-		if (calib)
-			ist30xx_calibrate(data, 1);
+	if (calib)
+		ist30xx_calibrate(data, 1);
 	}
 	mutex_unlock(&ist30xx_mutex);
 
@@ -1373,8 +1316,8 @@ ssize_t ist30xx_fw_sdcard_show(struct device *dev,
 		 IST30XX_FW_NAME);
 	fp = filp_open(fw_path, O_RDONLY, 0);
 	if (IS_ERR(fp)) {
-		data->status.update_result = 1;
-		tsp_info("file %s open error:%d\n", fw_path, fp);
+        data->status.update_result = 1;
+		tsp_info("file %s open error\n", fw_path);
 		goto err_file_open;
 	}
 
@@ -1389,7 +1332,7 @@ ssize_t ist30xx_fw_sdcard_show(struct device *dev,
 
 	nread = vfs_read(fp, (char __user *)buff, fsize, &fp->f_pos);
 	if (nread != fsize) {
-		data->status.update_result = 1;
+        data->status.update_result = 1;
 		tsp_info("mismatch fw size\n");
 		goto err_fw_size;
 	}
@@ -1403,13 +1346,13 @@ ssize_t ist30xx_fw_sdcard_show(struct device *dev,
 	ret = ist30xx_get_update_info(data, fw, fw_size);
 	if (ret) {
 		data->status.update_result = 1;
-		goto err_get_info;
-	}
+        goto err_get_info;
+    }
 
 	data->fw.bin.main_ver = ist30xx_parse_ver(data, FLAG_MAIN, fw);
 	data->fw.bin.fw_ver = ist30xx_parse_ver(data, FLAG_FW, fw);
 	data->fw.bin.test_ver = ist30xx_parse_ver(data, FLAG_TEST, fw);
-	data->fw.bin.core_ver = ist30xx_parse_ver(data, FLAG_CORE, fw);
+    data->fw.bin.core_ver = ist30xx_parse_ver(data, FLAG_CORE, fw);
 
 	mutex_lock(&ist30xx_mutex);
 	ist30xx_fw_update(data, fw, fw_size);
@@ -1422,7 +1365,7 @@ err_fw_size:
 	if (buff)
 		kfree(buff);
 err_alloc:
-		filp_close(fp, NULL);
+	filp_close(fp, NULL);
 err_file_open:
 	set_fs(old_fs);
 
@@ -1458,8 +1401,7 @@ ssize_t ist30xx_fw_status_show(struct device *dev,
 		if (data->status.update_result)
 			count = sprintf(buf, "Update fail\n");
 		else
-			count = sprintf(buf, "Pass\n");
-		break;
+		count = sprintf(buf, "Pass\n");
 	}
 
 	return count;
@@ -1496,7 +1438,7 @@ ssize_t ist30xx_fw_read_show(struct device *dev, struct device_attribute *attr,
     snprintf(fw_path, MAX_FILE_PATH, "/sdcard/%s", IST30XX_BIN_NAME);
     fp = filp_open(fw_path, O_CREAT|O_WRONLY|O_TRUNC, 0);
     if (IS_ERR(fp)) {
-		tsp_info("file %s open error:%d\n", fw_path, fp);
+		tsp_info("file %s open error\n", fw_path);
 		goto err_file_open;
 	}
 
@@ -1546,13 +1488,13 @@ ssize_t ist30xx_fw_version_show(struct device *dev,
 
 		ret = ist30xx_get_update_info(data, data->fw.buf, data->fw.buf_size);
 		if (ret == 0) {
-			count += snprintf(msg, sizeof(msg),
-					" Header - main: %x, fw: %x, test: %x, core: %x\n",
-					ist30xx_parse_ver(data, FLAG_MAIN, data->fw.buf),
-					ist30xx_parse_ver(data, FLAG_FW, data->fw.buf),
-					ist30xx_parse_ver(data, FLAG_TEST, data->fw.buf),
-					ist30xx_parse_ver(data, FLAG_CORE, data->fw.buf));
-			strncat(buf, msg, sizeof(msg));
+		count += snprintf(msg, sizeof(msg),
+				" Header - main: %x, fw: %x, test: %x, core: %x\n",
+				ist30xx_parse_ver(data, FLAG_MAIN, data->fw.buf),
+				ist30xx_parse_ver(data, FLAG_FW, data->fw.buf),
+				ist30xx_parse_ver(data, FLAG_TEST, data->fw.buf),
+				ist30xx_parse_ver(data, FLAG_CORE, data->fw.buf));
+		strncat(buf, msg, sizeof(msg));
 		}
 
 		if (data->dt_data->fw_bin && firmware) {
@@ -1568,8 +1510,7 @@ ssize_t ist30xx_fw_version_show(struct device *dev,
 
 /* sysfs  */
 static DEVICE_ATTR(fw_read, S_IRUGO, ist30xx_fw_read_show, NULL);
-static DEVICE_ATTR(firmware, S_IRUGO, ist30xx_fw_status_show,
-		   ist30xx_fw_store);
+static DEVICE_ATTR(firmware, S_IRUGO, ist30xx_fw_status_show, ist30xx_fw_store);
 static DEVICE_ATTR(fw_sdcard, S_IRUGO, ist30xx_fw_sdcard_show, NULL);
 static DEVICE_ATTR(version, S_IRUGO, ist30xx_fw_version_show, NULL);
 

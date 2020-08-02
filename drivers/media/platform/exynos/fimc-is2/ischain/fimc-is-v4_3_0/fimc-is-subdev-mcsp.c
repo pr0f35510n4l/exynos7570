@@ -298,7 +298,7 @@ static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
 	struct camera2_node *node)
 {
 	int ret = 0;
-	struct fimc_is_group *head;
+	struct fimc_is_group *parent;
 	struct fimc_is_subdev *leader;
 	struct fimc_is_queue *queue;
 	struct mcs_param *mcs_param;
@@ -432,12 +432,12 @@ static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
 			 * For supporting multi input to single output.
 			 * But this function is not supported in full OTF chain.
 			 */
-			if (device->group_mcs.head)
-				head = device->group_mcs.head;
+			if (device->group_mcs.parent)
+				parent = device->group_mcs.parent;
 			else
-				head = &device->group_mcs;
+				parent = &device->group_mcs;
 
-			if (!test_bit(FIMC_IS_GROUP_OTF_INPUT, &head->state) && (head->asyn_shots == 1)) {
+			if (!test_bit(FIMC_IS_GROUP_OTF_INPUT, &parent->state) && (parent->asyn_shots == 1)) {
 				ret = down_interruptible(&subdev->vctx->video->smp_multi_input);
 				if (ret)
 					mswarn(" smp_multi_input down fail(%d)", device, subdev, ret);

@@ -64,6 +64,14 @@ enum decon_output_type {
 	DECON_OUT_DSI = 0,
 };
 
+struct decon_clk_info {
+	u32	disp_vclk;
+	u32	mif_vclk;
+	u32	disp_dvfs;
+	u32 vclk_num;
+	u32 vclk_denom;
+};
+
 struct decon_psr_info {
 	enum decon_psr_mode psr_mode;
 	enum decon_trig_mode trig_mode;
@@ -73,6 +81,7 @@ struct decon_psr_info {
 struct decon_init_param {
 	struct decon_psr_info psr;
 	struct decon_lcd *lcd_info;
+	struct decon_clk_info *decon_clk;
 	u32 nr_windows;
 };
 
@@ -112,6 +121,7 @@ void decon_reg_activate_window(u32 id, u32 index);
 void decon_enable_eclk_idle_gate(u32 id, enum decon_set_eclk_idle_gate en);
 
 /* CAL raw functions list */
+void decon_reg_set_disp_ss_cfg(void __iomem *disp_ss_regs, u32 enable);
 int decon_reg_reset(u32 id);
 void decon_reg_set_default_win_channel(u32 id);
 void decon_reg_set_clkgate_mode(u32 id, u32 en);
@@ -128,6 +138,7 @@ void decon_reg_set_clkval(u32 id, u32 clkdiv);
 void decon_reg_direct_on_off(u32 id, u32 en);
 void decon_reg_per_frame_off(u32 id);
 void decon_reg_set_freerun_mode(u32 id, u32 en);
+void decon_reg_set_vclk_divider(u32 id, u32 denom, u32 num);
 void decon_reg_update_standalone(u32 id);
 void decon_reg_configure_lcd(u32 id, enum decon_dsi_mode dsi_mode, struct decon_lcd *lcd_info);
 void decon_reg_configure_trigger(u32 id, enum decon_trig_mode mode);

@@ -480,6 +480,14 @@ struct input_keymap_entry {
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
 
+/* Dummy touchkey code */
+#define KEY_DUMMY_HOME1		249
+#define KEY_DUMMY_HOME2		250
+#define KEY_DUMMY_MENU		251
+#define KEY_DUMMY_HOME		252
+#define KEY_DUMMY_BACK		253
+#define KEY_RECENT		254
+
 /* Code 255 is reserved for special needs of AT keyboard driver */
 
 #define BTN_MISC		0x100
@@ -539,6 +547,7 @@ struct input_keymap_entry {
 #define BTN_MODE		0x13c
 #define BTN_THUMBL		0x13d
 #define BTN_THUMBR		0x13e
+#define BTN_GAME		0x13f
 
 #define BTN_DIGI		0x140
 #define BTN_TOOL_PEN		0x140
@@ -660,6 +669,11 @@ struct input_keymap_entry {
 #define KEY_DEL_EOS		0x1c1
 #define KEY_INS_LINE		0x1c2
 #define KEY_DEL_LINE		0x1c3
+#define KEY_SIDE_GESTURE	0x1c6
+#define KEY_BLACK_UI_GESTURE	0x1c7
+
+#define KEY_SIDE_GESTURE_RIGHT	0x1ca
+#define KEY_SIDE_GESTURE_LEFT	0x1cb
 
 #define KEY_FN			0x1d0
 #define KEY_FN_ESC		0x1d1
@@ -793,6 +807,17 @@ struct input_keymap_entry {
 #define BTN_TRIGGER_HAPPY39		0x2e6
 #define BTN_TRIGGER_HAPPY40		0x2e7
 
+/* 0x2f1~2f8 is key event for specail event. */
+#define KEY_CP_GRIP				0x2f1	/* grip sensor for CP */
+#define KEY_TSP_NONE_KEY2		0x2f2	/* grip sensor for WIFI */
+
+#ifdef CONFIG_USB_HMT_SAMSUNG_INPUT
+#define KEY_START_NOTA_CMD		0x2fc
+#define KEY_START_TA_CMD		0x2fd
+#define KEY_ONGOING_TA_CMD		0x2fe
+#define KEY_HMT_CMD_START		KEY_START_NOTA_CMD
+#endif
+
 /* We avoid low common keys in module aliases so they don't get huge. */
 #define KEY_MIN_INTERESTING	KEY_MUTE
 #define KEY_MAX			0x2ff
@@ -891,7 +916,10 @@ struct input_keymap_entry {
 #define SW_ROTATE_LOCK		0x0c  /* set = rotate locked/disabled */
 #define SW_LINEIN_INSERT	0x0d  /* set = inserted */
 #define SW_MUTE_DEVICE		0x0e  /* set = device disabled */
-#define SW_MAX			0x0f
+#define SW_GLOVE		0x0f	/* set = glove mode */
+#define SW_PEN_INSERT		0x13	/* set = pen out */
+#define SW_FLIP                 0x15    /* set = flip cover */
+#define SW_MAX			0x20
 #define SW_CNT			(SW_MAX+1)
 
 /*

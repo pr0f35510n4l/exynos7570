@@ -35,5 +35,3 @@ static inline ktime_t ktime_add_ms(const ktime_t kt, const u64 msec)
 {
         return ktime_add_ns(kt, msec * NSEC_PER_MSEC);
 }
-
-

@@ -15,6 +15,14 @@
 #define CIS_TEST_PATTERN_MODE 0
 #define CIS_STREAM_OFF_WAIT_TIME 4	/* 4ms */
 
+struct sensor_pll_info_compact {
+	u32 ext_clk;
+	u32 mipi_datarate;
+	u32 pclk;
+	u32 frame_length_lines;
+	u32 line_length_pck;
+};
+
 struct sensor_pll_info {
 	u32 ext_clk;
 	u32 vt_pix_clk_div;
@@ -30,7 +38,20 @@ struct sensor_pll_info {
 	u32 line_length_pck;
 };
 
+/* FIXME: make it dynamic parsing */
+#define I2C_WRITE 3
+#define I2C_BYTE  2
+#define I2C_DATA  1
+#define I2C_ADDR  0
+
+enum i2c_write {
+	I2C_WRITE_ADDR8_DATA8 = 0x0,
+	I2C_WRITE_ADDR16_DATA8,
+	I2C_WRITE_ADDR16_DATA16
+};
+
 int sensor_cis_set_registers(struct v4l2_subdev *subdev, const u32 *regs, const u32 size);
+int sensor_cis_set_registers_addr8(struct v4l2_subdev *subdev, const u32 *regs, const u32 size);
 int sensor_cis_check_rev(struct fimc_is_cis *cis);
 
 u32 sensor_cis_calc_again_code(u32 permile);

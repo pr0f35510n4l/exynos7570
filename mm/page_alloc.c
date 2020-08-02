@@ -121,6 +121,19 @@ unsigned long dirty_balance_reserve __read_mostly;
 int percpu_pagelist_fraction;
 gfp_t gfp_allowed_mask __read_mostly = GFP_BOOT_MASK;
 
+static unsigned int boot_mode = 0;
+static int __init setup_bootmode(char *str)
+{
+	printk("%s: boot_mode is %u\n", __func__, boot_mode);
+	if (get_option(&str, &boot_mode)) {
+		printk("%s: boot_mode is %u\n", __func__, boot_mode);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+early_param("bootmode", setup_bootmode);
+
 #ifdef CONFIG_PM_SLEEP
 /*
  * The following functions are used by the suspend/hibernate code to temporarily
@@ -1116,6 +1129,8 @@ static int try_to_steal_freepages(struct zone *zone, struct page *page,
 
 	if (current_order >= pageblock_order / 2 ||
 	    start_type == MIGRATE_RECLAIMABLE ||
+	    start_type == MIGRATE_UNMOVABLE ||
+	    start_type == MIGRATE_MOVABLE ||
 	    page_group_by_mobility_disabled) {
 		int pages;
 
@@ -1123,6 +1138,7 @@ static int try_to_steal_freepages(struct zone *zone, struct page *page,
 
 		/* Claim the whole block if over half of it is free */
 		if (pages >= (1 << (pageblock_order-1)) ||
+				start_type == MIGRATE_MOVABLE ||
 				page_group_by_mobility_disabled)
 			set_pageblock_migratetype(page, start_type);
 
@@ -2766,7 +2782,7 @@ rebalance:
 	 * If we failed to make any progress reclaiming, then we are
 	 * running out of options and have to consider going OOM
 	 */
-	if (!did_some_progress) {
+	if (!did_some_progress && (boot_mode != 2)) {
 		if (oom_gfp_allowed(gfp_mask)) {
 			if (oom_killer_disabled)
 				goto nopage;
@@ -5837,6 +5853,9 @@ void setup_per_zone_wmarks(void)
  */
 static void __meminit calculate_zone_inactive_ratio(struct zone *zone)
 {
+#ifdef CONFIG_FIX_INACTIVE_RATIO
+	zone->inactive_ratio = 1;
+#else
 	unsigned int gb, ratio;
 
 	/* Zone size in gigabytes */
@@ -5847,6 +5866,7 @@ static void __meminit calculate_zone_inactive_ratio(struct zone *zone)
 		ratio = 1;
 
 	zone->inactive_ratio = ratio;
+#endif
 }
 
 static void __meminit setup_per_zone_inactive_ratio(void)

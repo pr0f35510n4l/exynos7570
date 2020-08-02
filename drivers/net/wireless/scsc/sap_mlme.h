@@ -27,9 +27,6 @@ void slsi_rx_mic_failure_ind(struct slsi_dev *sdev, struct net_device *dev, stru
 void slsi_rx_reassoc_ind(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *skb);
 void slsi_tdls_peer_ind(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *skb);
 void slsi_rx_listen_end_ind(struct net_device *dev, struct sk_buff *skb);
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-void slsi_rx_rmc_leader_ind(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *skb);
-#endif
 void slsi_rx_blockack_ind(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *skb);
 
 #endif

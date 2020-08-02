@@ -118,16 +118,12 @@
 				 (mfc_version(dev) == 0x78))
 #define IS_MFCv8X(dev)		(mfc_version(dev) == 0x80)
 #define IS_MFCv9X(dev)		(mfc_version(dev) == 0x90)
-#define IS_MFCv10X(dev)		((mfc_version(dev) == 0xA0) || \
-				 (mfc_version(dev) == 0xA01) || \
+#define IS_MFCv10X(dev)		((mfc_version(dev) == 0xA01) || \
 				 (mfc_version(dev) == 0xA0A0) || \
 				 (mfc_version(dev) == 0xA0B0) || \
 				 (mfc_version(dev) == 0xA140))
 #define IS_MFCv78(dev)		(mfc_version(dev) == 0x78)
-#define IS_MFCv101X(dev)	((mfc_version(dev) == 0xA01) || \
-				 (mfc_version(dev) == 0xA0A0) || \
-				 (mfc_version(dev) == 0xA0B0) || \
-				 (mfc_version(dev) == 0xA140))
+#define IS_MFCv101(dev)		(mfc_version(dev) == 0xA01)
 #define IS_MFCV6(dev)		(IS_MFCv6X(dev) || IS_MFCv7X(dev) ||	\
 				IS_MFCv8X(dev) || IS_MFCv9X(dev) ||	\
 				IS_MFCv10X(dev))
@@ -178,7 +174,7 @@
 #define FW_HAS_INT_TIMEOUT(dev)		(IS_MFCv9X(dev) || IS_MFCv10X(dev))
 #define FW_HAS_CONCEAL_CONTROL(dev)	IS_MFCv10X(dev)
 
-#define FW_SUPPORT_SKYPE(dev)		IS_MFCv10X(dev) &&		\
+#define FW_SUPPORT_SKYPE(dev)		IS_MFCv101(dev) &&		\
 					(dev->fw.date >= 0x150901)
 #define FW_HAS_ROI_CONTROL(dev)		IS_MFCv10X(dev)
 

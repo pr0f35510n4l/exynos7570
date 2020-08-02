@@ -18,6 +18,9 @@
 #define FIMC_IS_MAX_BUFS	VIDEO_MAX_FRAME
 #define FIMC_IS_MAX_PLANES	VIDEO_MAX_PLANES
 
+/*matching for xxxTargetAddress in struct camera2_scaler_uctl */
+#define FIMC_IS_MAX_TARGET_ADDR	4
+
 #define FRAMEMGR_ID_INVALID	0x0000000
 #define FRAMEMGR_ID_SSX 	0x0000100
 #define FRAMEMGR_ID_SSXVC0	0x0000011

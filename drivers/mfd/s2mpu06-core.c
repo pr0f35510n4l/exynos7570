@@ -50,10 +50,10 @@ static struct mfd_cell s2mpu06_devs[] = {
 #ifdef	CONFIG_KEYBOARD_S2MPU06
 	{ .name = "s2mpu06-power-keys", },
 #endif
-#ifdef	CONFIG_SEC_CHARGER_S2MPU06
+#if defined(CONFIG_SEC_CHARGER_S2MPU06) || defined(CONFIG_CHARGER_S2MPU06)
 	{ .name = "s2mpu06-charger", },
 #endif
-#ifdef	CONFIG_SEC_FUELGAUGE_S2MPU06
+#if defined(CONFIG_SEC_FUELGAUGE_S2MPU06) || defined(CONFIG_FUELGAUGE_S2MPU06)
 	{ .name = "s2mpu06-fuelgauge", },
 #endif
 };
@@ -95,6 +95,23 @@ int s2mpu06_read_reg(struct i2c_client *i2c, u8 reg, u8 *dest)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(s2mpu06_read_reg);
+
+int s2mpu06_read_reg_non_mutex(struct i2c_client *i2c, u8 reg, u8 *dest)
+{
+	int ret;
+
+	ret = i2c_smbus_read_byte_data(i2c, reg);
+	if (ret < 0) {
+		pr_info("%s:%s reg(0x%x), ret(%d)\n",
+			 MFD_DEV_NAME, __func__, reg, ret);
+		return ret;
+	}
+
+	ret &= 0xff;
+	*dest = ret;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(s2mpu06_read_reg_non_mutex);
 
 int s2mpu06_bulk_read(struct i2c_client *i2c, u8 reg, int count, u8 *buf)
 {

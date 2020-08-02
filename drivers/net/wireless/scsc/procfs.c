@@ -1,6 +1,6 @@
 /*****************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -100,6 +100,57 @@ static ssize_t slsi_procfs_mutex_stats_read(struct file *file,  char __user *use
 	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
 }
 #endif
+
+static ssize_t slsi_procfs_sta_bss_read(struct file *file,  char __user *user_buf, size_t count, loff_t *ppos)
+{
+	char              buf[100];
+	int               pos;
+	const size_t      bufsz = sizeof(buf);
+	struct slsi_dev   *sdev = (struct slsi_dev *)file->private_data;
+	struct net_device *dev;
+	struct netdev_vif *ndev_vif;
+	struct cfg80211_bss  *sta_bss;
+	int                  channel = 0, center_freq = 0;
+	u8                   no_mac[] = {0, 0, 0, 0, 0, 0};
+	u8                   *mac_ptr;
+	u8                   ssid[32];
+	s32                  signal = 0;
+
+	SLSI_UNUSED_PARAMETER(file);
+
+	mac_ptr = no_mac;
+	ssid[0] = 0;
+
+	dev = slsi_get_netdev(sdev, 1);
+	if (!dev)
+		goto exit;
+
+	ndev_vif = netdev_priv(dev);
+
+	SLSI_MUTEX_LOCK(ndev_vif->vif_mutex);
+	sta_bss = ndev_vif->sta.sta_bss;
+	if (sta_bss && ndev_vif->vif_type == FAPI_VIFTYPE_STATION &&
+	    ndev_vif->sta.vif_status == SLSI_VIF_STATUS_CONNECTED) {
+		const u8 *ssid_ie = cfg80211_find_ie(WLAN_EID_SSID, sta_bss->ies->data, sta_bss->ies->len);
+
+		if (ssid_ie) {
+			memcpy(ssid, &ssid_ie[2], ssid_ie[1]);
+			ssid[ssid_ie[1]] = 0;
+		}
+
+		if (sta_bss->channel) {
+			channel = sta_bss->channel->hw_value;
+			center_freq = sta_bss->channel->center_freq;
+		}
+		mac_ptr = sta_bss->bssid;
+		signal = sta_bss->signal;
+	}
+	SLSI_MUTEX_UNLOCK(ndev_vif->vif_mutex);
+
+exit:
+	pos = scnprintf(buf, bufsz, "%pM,%s,%d,%d,%d", mac_ptr, ssid, channel, center_freq, signal);
+	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
+}
 
 static int slsi_procfs_status_show(struct seq_file *m, void *v)
 {
@@ -347,7 +398,6 @@ static ssize_t slsi_procfs_uapsd_write(struct file *file,
 	int               qos_info      = 0;
 	int               offset        = 0;
 	char              *read_string;
-	int               r               = 0;
 
 	dev = slsi_get_netdev(sdev, SLSI_NET_INDEX_WLAN);
 
@@ -374,20 +424,8 @@ static ssize_t slsi_procfs_uapsd_write(struct file *file,
 		return -EINVAL;
 	}
 
+	/*Store the qos info and use it to set MIB during connection*/
 	sdev->device_config.qos_info = qos_info;
-
-	if (!ndev_vif->activated) {
-		kfree(read_string);
-		return count;
-	}
-
-	r = slsi_set_uapsd_qos_info(sdev, dev, sdev->device_config.qos_info);
-
-	if (r != 0) {
-		SLSI_NET_ERR(dev, "qosInfo MIB write failed: %d\n", r);
-		kfree(read_string);
-		return -EINVAL;
-	}
 
 	kfree(read_string);
 	return count;
@@ -827,6 +865,7 @@ static int slsi_procfs_tcp_ack_suppression_show(struct seq_file *m, void *v)
 			seq_printf(m, "%s: tack_aged=%u\n", dev->name, ndev_vif->tack_ktime);
 			seq_printf(m, "%s: tack_dacks=%u\n", dev->name, ndev_vif->tack_dacks);
 			seq_printf(m, "%s: tack_sacks=%u\n", dev->name, ndev_vif->tack_sacks);
+			seq_printf(m, "%s: tack_low_window=%u\n", dev->name, ndev_vif->tack_low_window);
 			seq_printf(m, "%s: tack_ece=%u\n", dev->name, ndev_vif->tack_ece);
 			seq_printf(m, "%s: tack_nocache=%u\n", dev->name, ndev_vif->tack_nocache);
 			seq_printf(m, "%s: tack_norecord=%u\n", dev->name, ndev_vif->tack_norecord);
@@ -861,6 +900,7 @@ SLSI_PROCFS_SEQ_FILE_OPS(offline_dbg_dump_klog);
 #ifdef CONFIG_SCSC_WLAN_MUTEX_DEBUG
 SLSI_PROCFS_READ_FILE_OPS(mutex_stats);
 #endif
+SLSI_PROCFS_READ_FILE_OPS(sta_bss);
 
 SLSI_PROCFS_SEQ_FILE_OPS(tcp_ack_suppression);
 
@@ -898,6 +938,7 @@ int slsi_create_proc_dir(struct slsi_dev *sdev)
 #ifdef CONFIG_SCSC_WLAN_MUTEX_DEBUG
 		SLSI_PROCFS_ADD_FILE(sdev, mutex_stats, parent, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 #endif
+		SLSI_PROCFS_ADD_FILE(sdev, sta_bss, parent, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 		SLSI_PROCFS_SEQ_ADD_FILE(sdev, tcp_ack_suppression, sdev->procfs_dir, S_IRUSR | S_IRGRP);
 	}
 
@@ -932,6 +973,7 @@ void slsi_remove_proc_dir(struct slsi_dev *sdev)
 #ifdef CONFIG_SCSC_WLAN_MUTEX_DEBUG
 		SLSI_PROCFS_REMOVE_FILE(mutex_stats, sdev->procfs_dir);
 #endif
+		SLSI_PROCFS_REMOVE_FILE(sta_bss, sdev->procfs_dir);
 		SLSI_PROCFS_REMOVE_FILE(tcp_ack_suppression, sdev->procfs_dir);
 
 		(void)snprintf(dir, sizeof(dir), "driver/unifi%d", sdev->procfs_instance);

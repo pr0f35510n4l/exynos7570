@@ -356,96 +356,38 @@ int ist30xx_burst_write(struct i2c_client *client, u32 addr,
 	return 0;
 }
 
-//static struct regulator *touch_regulator;
+
 int ts_power_enable(struct ist30xx_data *data, int en)
 {
-	int rc = 0;
-#if 0
-	static struct regulator *ldo6;
-#endif
-	const char *reg_name;
+	struct regulator *regulator_avdd;
+	int retval = 0;
 
-	reg_name = "8916_l6";
+	regulator_avdd = regulator_get(NULL, data->dt_data->regulator_avdd);
+	if (IS_ERR(regulator_avdd)) {
+		tsp_err("%s: Failed to get %s regulator.\n",
+			 __func__, data->dt_data->regulator_avdd);
+		return PTR_ERR(regulator_avdd);
+	}
 
 	tsp_info("%s %s\n", __func__, (en) ? "on" : "off");
 
-#if 0
-	if (!ldo6) {
-		ldo6 = regulator_get(NULL, reg_name);
-
-		if (IS_ERR(ldo6)) {
-			tsp_err("%s: could not get %s, rc = %ld\n",
-				__func__, reg_name, PTR_ERR(ldo6));
-			return -EINVAL;
-		}
-		rc = regulator_set_voltage(ldo6, 1800000, 1800000);
-		if (rc)
-			tsp_err("%s: %s set_level failed (%d)\n", __func__, reg_name, rc);
-	}
-#endif
-
-	/*Power from MFD internal LDO */
-	if(data->dt_data->tsp_vdd_name) {
-		if(!data->dt_data->tsp_power) {
-			data->dt_data->tsp_power = regulator_get(&data->client->dev, data->dt_data->tsp_vdd_name);
-
-			if (IS_ERR(data->dt_data->tsp_power)) {
-				tsp_err("%s: could not get tsp_power, rc = %ld\n",
-					__func__,PTR_ERR(data->dt_data->tsp_power));
-				return -EINVAL;
-			}
-			rc = regulator_set_voltage(data->dt_data->tsp_power, 3000000, 3000000);
-			if (rc)
-				tsp_err("%s: %s set_level failed (%d)\n", __func__, data->dt_data->tsp_vdd_name, rc);
-		}
-	}
-
 	if (en) {
-#if 0
-		rc = regulator_enable(ldo6);
-		if (rc) {
-			tsp_err("%s: %s enable failed (%d)\n", __func__, reg_name, rc);
-			return -EINVAL;
+		retval = regulator_enable(regulator_avdd);
+		if (retval) {
+			tsp_err("%s: Failed to enable avdd: %d\n", __func__, retval);
+			return retval;
 		}
-#endif
-		if(data->dt_data->tsp_vdd_name) {
-			rc = regulator_set_voltage(data->dt_data->tsp_power, 3000000, 3000000);
-			if (rc)
-				tsp_err("%s: %s set_level failed (%d)\n", __func__, data->dt_data->tsp_vdd_name, rc);
-			rc = regulator_enable(data->dt_data->tsp_power);
-			if (rc) {
-				tsp_err("%s: %s enable failed (%d)\n", __func__, data->dt_data->tsp_vdd_name, rc);
-				return -EINVAL;
-			}
-		}
+
 	} else {
-#if 0
-		rc = regulator_disable(ldo6);
-		if (rc) {
-			tsp_err("%s: %s disable failed (%d)\n", __func__, reg_name, rc);
-			return -EINVAL;
-		}
-#endif
-		if(data->dt_data->tsp_vdd_name) {
-			rc = regulator_disable(data->dt_data->tsp_power);
-			if (rc) {
-				tsp_err("%s: %s disable failed (%d)\n", __func__, data->dt_data->tsp_vdd_name, rc);
-				return -EINVAL;
-			}
-		}
+		if (regulator_is_enabled(regulator_avdd))
+			regulator_disable(regulator_avdd);
 	}
-	if(!data->dt_data->tsp_vdd_name) {
-		rc = gpio_direction_output(data->dt_data->touch_en_gpio, en);
-			if (rc) {
-			tsp_err("%s: unable to set_direction for TSP_EN [%d]\n",
-				__func__, data->dt_data->touch_en_gpio);
-			}
-		tsp_info("%s: touch_en: %d, %s \n", __func__, gpio_get_value(data->dt_data->touch_en_gpio), reg_name);
-	} else {
-		tsp_info("%s: %s: %s: %d\n", __func__, reg_name, data->dt_data->tsp_vdd_name, regulator_is_enabled(data->dt_data->tsp_power));
-	}
-	return rc;
+
+	regulator_put(regulator_avdd);
+
+	return retval;
 }
+
 
 int ist30xx_power_on(struct ist30xx_data *data, bool download)
 {

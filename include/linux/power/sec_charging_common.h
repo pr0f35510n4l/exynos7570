@@ -590,7 +590,6 @@ static inline struct power_supply *get_power_supply_by_name(char *name)
 	int ret;	\
 	psy = get_power_supply_by_name((name));	\
 	if (!psy) {	\
-		pr_err("%s: can not get power_supply: %s.\n", __func__, name); \
 		value.intval = 0;	\
 	} else {	\
 		ret = psy->function##_property(psy, (property), &(value)); \

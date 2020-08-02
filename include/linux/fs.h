@@ -133,6 +133,12 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 /* Has write method(s) */
 #define FMODE_CAN_WRITE         ((__force fmode_t)0x40000)
 
+/* File hasn't page cache and can't be mmaped, for stackable filesystem */
+#define FMODE_NONMAPPABLE        ((__force fmode_t)0x400000)
+   
+/* File page don't need to be cached, for stackable filesystem's lower file */
+#define FMODE_NONCACHEABLE     ((__force fmode_t)0x800000)
+
 /* File was opened by fanotify and shouldn't generate fanotify events */
 #define FMODE_NONOTIFY		((__force fmode_t)0x1000000)
 
@@ -395,6 +401,8 @@ int pagecache_write_end(struct file *, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata);
 
+#define KEY_MAX_SIZE	64
+
 struct backing_dev_info;
 struct address_space {
 	struct inode		*host;		/* owner: inode, block_device */
@@ -416,7 +424,7 @@ struct address_space {
 	void			*private_data;	/* ditto */
 #if defined(CONFIG_MMC_DW_FMP_ECRYPT_FS) || defined(CONFIG_UFS_FMP_ECRYPT_FS)
 	unsigned char		*iv;		/* iv */
-	unsigned char		*key;		/* key */
+	unsigned char		key[KEY_MAX_SIZE];	/* key */
 	unsigned long		key_length;	/* key length */
 	char			*alg;		/* algorithm */
 	pgoff_t			sensitive_data_index;	/* data starts here */
@@ -424,8 +432,12 @@ struct address_space {
 #ifdef CONFIG_CRYPTO_FIPS
 	bool			cc_enable;	/* cc flag */
 #endif
-	bool			use_fmp;	/* use fmp flag  */
+	int			private_enc_mode;	/* private enc_mode */
+	int			private_algo_mode;	/* private algo mode */
 	bool			plain_text;	/* plain_text flag */
+#endif
+#ifdef CONFIG_SDP
+	int userid;
 #endif
 } __attribute__((aligned(sizeof(long))));
 	/*
@@ -1610,6 +1622,7 @@ struct super_operations {
 	int (*bdev_try_to_free_page)(struct super_block*, struct page*, gfp_t);
 	long (*nr_cached_objects)(struct super_block *, int);
 	long (*free_cached_objects)(struct super_block *, long, int);
+	long (*unlink_callback)(struct super_block *, char *);
 };
 
 /*
@@ -2293,6 +2306,8 @@ static inline int generic_write_sync(struct file *file, loff_t pos, loff_t count
 }
 extern void emergency_sync(void);
 extern void emergency_remount(void);
+extern int intr_sync(int *);
+
 #ifdef CONFIG_BLOCK
 extern sector_t bmap(struct inode *, sector_t);
 #endif

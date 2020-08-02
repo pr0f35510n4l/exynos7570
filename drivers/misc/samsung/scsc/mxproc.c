@@ -402,7 +402,7 @@ static ssize_t mx_procfs_mx_release_read(struct file *file, char __user *user_bu
 		build_id = mxproc->mxman->fw_build_id;
 
 	memset(buf, '\0', sizeof(buf));
-	bytes = snprintf(buf, sizeof(buf), "Release: %d.%d.%d (f/w: %s)\n",
+	bytes = snprintf(buf, sizeof(buf), "Release: %d.%d.%d N (f/w: %s)\n",
 		SCSC_RELEASE_PRODUCT, SCSC_RELEASE_ITERATION, SCSC_RELEASE_CANDIDATE,
 		build_id ? build_id : "unknown");
 	if (bytes > sizeof(buf))

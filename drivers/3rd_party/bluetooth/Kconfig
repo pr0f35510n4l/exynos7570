@@ -1,8 +1,0 @@
-#
-# bluetooth device configuration
-#
-
-menu "bluetooth device drivers"
-
-source "drivers/3rd_party/bluetooth/bcm/Kconfig"
-endmenu

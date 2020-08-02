@@ -33,9 +33,12 @@
 #define VCLKCON0_VLCKFREE			(1 << 0)
 
 #define VCLKCON1				(0x0014)
+#define VCLKCON1_DENOM_VALUE_OF_CLK_F(_v)  ((_v) << 16)
+#define VCLKCON1_NUM_VALUE_OF_CLK_F(_v)   ((_v) << 0)
+#define VCLKCON1_DENOM_VALUE_OF_CLK_F_MASK  (0x3ff << 16)
+#define VCLKCON1_NUM_VALUE_OF_CLK_F_MASK        (0x3ff << 0)
+
 #define VCLKCON2				(0x0018)
-#define VCLKCON_CLKVAL_F(_v)			((_v) << 16)
-#define VCLKCON_CLKVAL_F_MASK			(0xff << 16)
 
 #define SHADOWCON				0x0030
 #define SHADOWCON_WIN_PROTECT(_win)		(1 << (8 + (_win)))
@@ -251,6 +254,8 @@
 
 #define DECON_UPDATE				0x0710
 #define DECON_UPDATE_STANDALONE_F		(1 << 0)
+
+#define DECON_SS_SEC				(0x1 << 0)
 
 /* TBD: Registers for Debugging features to be added */
 

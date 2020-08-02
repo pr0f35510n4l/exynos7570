@@ -306,12 +306,14 @@ static int mobicore_cpu_callback(struct notifier_block *nfb,
 #endif
 	case CPU_DOWN_PREPARE:
 	case CPU_DOWN_PREPARE_FROZEN:
-		mc_dev_info("Cpu %d is going to die\n", cpu);
+		/* ExySp */
+		mc_dev_info("Cpu %d is going to hotplug out\n", cpu);
 		mc_cpu_offline(cpu);
 		break;
 	case CPU_DEAD:
 	case CPU_DEAD_FROZEN:
-		mc_dev_info("Cpu %d is dead\n", cpu);
+		/* ExySp */
+		mc_dev_info("Cpu %d is hotplug out\n", cpu);
 		break;
 	}
 	return NOTIFY_OK;

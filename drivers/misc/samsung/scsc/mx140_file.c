@@ -147,7 +147,7 @@ int mx140_file_request_device_conf(struct scsc_mx *mx, const struct firmware **c
 	dev = scsc_mx_get_device(mx);
 #endif
 
-	/* e.g. /etc/wifi/mx140/wlan/mac.txt */
+	/* e.g. /etc/wifi/conf/wlan/mac.txt */
 
 	snprintf(config_path, sizeof(config_path), "%s/%s%s/%s",
 		base_dir,

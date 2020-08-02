@@ -54,7 +54,7 @@ static void scsc_mx_module_probe(struct scsc_mif_abs_driver *abs_driver, struct 
 	/* Avoid unused parm error */
 	(void)abs_driver;
 
-	mx_node = kzalloc(sizeof(*mx_node), GFP_ATOMIC);
+	mx_node = kzalloc(sizeof(*mx_node), GFP_KERNEL);
 	if (!mx_node)
 		return;
 	/* Create new mx instance */
@@ -99,7 +99,7 @@ static struct scsc_mif_abs_driver mx_module_mif_if = {
 
 static int __init scsc_mx_module_init(void)
 {
-	SCSC_TAG_INFO(MXMAN, SCSC_MX_CORE_MODDESC " scsc_release %d.%d.%d\n",
+	SCSC_TAG_INFO(MXMAN, SCSC_MX_CORE_MODDESC " scsc_release %d.%d.%d N\n",
 		SCSC_RELEASE_PRODUCT,
 		SCSC_RELEASE_ITERATION,
 		SCSC_RELEASE_CANDIDATE);
@@ -155,7 +155,7 @@ int scsc_mx_module_register_client_module(struct scsc_mx_module_client *module_c
 	struct mx_node      *mx_node;
 
 	/* Add node in modules linked list */
-	module_client_node = kzalloc(sizeof(*module_client_node), GFP_ATOMIC);
+	module_client_node = kzalloc(sizeof(*module_client_node), GFP_KERNEL);
 	if (!module_client_node)
 		return -ENOMEM;
 

@@ -323,7 +323,7 @@ int exynos7570_fimc_is_sensor_mclk_on(struct device *dev,
 	snprintf(sclk_name, sizeof(sclk_name), "mif_isp_sensor%d", channel);
 
 	fimc_is_enable(dev, sclk_name);
-	fimc_is_set_rate(dev, sclk_name, 26 * 1000000);
+	fimc_is_set_rate(dev, sclk_name, 24375000);
 
 	return 0;
 }

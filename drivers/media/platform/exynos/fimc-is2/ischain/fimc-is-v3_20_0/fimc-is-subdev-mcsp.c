@@ -74,6 +74,8 @@ static int fimc_is_ischain_mxp_cfg(struct fimc_is_subdev *subdev,
 		break;
 	default:
 		mswarn("vid(%d) is not matched", device, subdev, subdev->vid);
+		ret = -EINVAL;
+		goto p_err;
 		break;
 	}
 
@@ -141,14 +143,14 @@ static int fimc_is_ischain_mxp_adjust_crop(struct fimc_is_device_ischain *device
 	if (*output_crop_w < (input_crop_w + (down_ratio - 1)) / down_ratio) {
 		mwarn("Cannot be scaled down beyond 1/%d times(%d -> %d)",
 			device, down_ratio, input_crop_w, *output_crop_w);
-		*output_crop_w = (input_crop_w + (down_ratio - 1)) / down_ratio;
+		*output_crop_w = ALIGN((input_crop_w + (down_ratio - 1)) / down_ratio, 16);
 		changed |= 0x10;
 	}
 
 	if (*output_crop_h < (input_crop_h + (down_ratio - 1)) / down_ratio) {
 		mwarn("Cannot be scaled down beyond 1/%d times(%d -> %d)",
 			device, down_ratio, input_crop_h, *output_crop_h);
-		*output_crop_h = (input_crop_h + (down_ratio - 1)) / down_ratio;
+		*output_crop_h = ALIGN((input_crop_h + (down_ratio - 1)) / down_ratio, 2);
 		changed |= 0x20;
 	}
 
@@ -369,8 +371,9 @@ static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
 		break;
 	default:
 		target_addr = NULL;
-		mswarn("vid(%d) is not matched", device, subdev, node->vid);
-		break;
+		mserr("vid(%d) is not matched", device, subdev, node->vid);
+		ret = -EINVAL;
+		goto p_err;
 	}
 
 	mcs_output = fimc_is_itf_g_param(device, ldr_frame, index);

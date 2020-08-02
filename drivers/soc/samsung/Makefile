@@ -35,3 +35,5 @@ obj-$(CONFIG_EXYNOS_ACPM)    	+= acpm/
 
 # USI
 obj-$(CONFIG_USI) += usi.o
+
+obj-$(CONFIG_SEC_INCELL) += sec_incell.o

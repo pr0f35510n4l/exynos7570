@@ -35,4 +35,3 @@ PCI_MBOX_SHARED_DATA_ATTR struct pcie_mbox_shared_data {
 };
 
 #endif /* __PCIE_MBOX_SHARED_DATA_H */
-

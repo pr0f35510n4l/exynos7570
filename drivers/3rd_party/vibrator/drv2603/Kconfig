@@ -1,3 +1,0 @@
-config VIB_DRV2603
-	bool "TI_VIB_DRV2603"
-	default n

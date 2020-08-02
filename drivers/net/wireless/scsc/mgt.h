@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  *****************************************************************************/
 
@@ -214,16 +214,6 @@ static inline struct slsi_peer *slsi_get_peer_from_mac(struct slsi_dev *sdev, st
 			    compare_ether_addr(ndev_vif->peer_sta_record[i]->address, mac) == 0)
 				return ndev_vif->peer_sta_record[i];
 	}
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	else if (ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) {
-		int i = 0;
-
-		for (i = 0; i < SLSI_ADHOC_PEER_CONNECTIONS_MAX; i++)
-			if (ndev_vif->peer_sta_record[i] && ndev_vif->peer_sta_record[i]->valid &&
-			    compare_ether_addr(ndev_vif->peer_sta_record[i]->address, mac) == 0)
-				return ndev_vif->peer_sta_record[i];
-	}
-#endif
 	return NULL;
 }
 
@@ -372,8 +362,8 @@ static inline void slsi_p2p_queue_unsync_vif_del_work(struct netdev_vif *ndev_vi
 		sdev->p2p_state = next_state; \
 	} while (0)
 
-void slsi_purge_scan_results(struct sk_buff_head *scan_result);
-struct sk_buff *slsi_dequeue_cached_scan_result(struct sk_buff_head *scan_result);
+void slsi_purge_scan_results(struct slsi_scan *scan);
+struct sk_buff *slsi_dequeue_cached_scan_result(struct slsi_scan *scan, int *count);
 void slsi_get_hw_mac_address(struct slsi_dev *sdev, u8 *addr);
 int slsi_start(struct slsi_dev *sdev);
 void slsi_stop_net_dev(struct slsi_dev *sdev, struct net_device *dev);
@@ -405,7 +395,7 @@ struct ieee80211_channel *slsi_find_scan_channel(struct slsi_dev *sdev, struct i
 int slsi_auto_chan_select_scan(struct slsi_dev *sdev, int chan_count, struct ieee80211_channel *channels[]);
 int slsi_set_uint_mib(struct slsi_dev *dev, struct net_device *ndev, u16 psid, int value);
 int slsi_update_regd_rules(struct slsi_dev *sdev, bool country_check);
-int slsi_set_uapsd_qos_info(struct slsi_dev *sdev, struct net_device *dev, const int qos_info);
+int slsi_set_uapsd_qos_info(struct slsi_dev *sdev, struct net_device *dev);
 int slsi_p2p_init(struct slsi_dev *sdev, struct netdev_vif *ndev_vif);
 void slsi_p2p_deinit(struct slsi_dev *sdev, struct netdev_vif *ndev_vif);
 int slsi_p2p_vif_activate(struct slsi_dev *sdev, struct net_device *dev, struct ieee80211_channel *chan, u16 duration, bool set_probe_rsp_ies);
@@ -434,12 +424,6 @@ int slsi_read_default_country(struct slsi_dev *sdev, u8 *alpha2, u16 index);
 int slsi_read_disconnect_ind_timeout(struct slsi_dev *sdev, u16 psid);
 int slsi_read_regulatory_rules(struct slsi_dev *sdev, struct slsi_802_11d_reg_domain *domain_info, const char *alpha2);
 int slsi_set_country_update_regd(struct slsi_dev *sdev, const char *alpha2_code, int size);
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-int slsi_ibss_prepare_add_info_ies(struct netdev_vif *ndev_vif);
-bool slsi_search_ies_for_qos_indicators(struct slsi_dev *sdev, u8 *ies, int ies_len);
-int slsi_ibss_enable_blockack(struct slsi_dev *sdev, struct net_device *dev, struct slsi_peer *peer, int userpri);
-int slsi_ibss_disable_blockack(struct slsi_dev *sdev, struct net_device *dev, int userpri);
-#endif
 void slsi_clear_offchannel_data(struct slsi_dev *sdev, bool acquire_lock);
 int slsi_hs2_vif_activate(struct slsi_dev *sdev, struct net_device *dev, struct ieee80211_channel *chan, u16 duration);
 void slsi_hs2_vif_deactivate(struct slsi_dev *sdev, struct net_device *devbool, bool hw_available);

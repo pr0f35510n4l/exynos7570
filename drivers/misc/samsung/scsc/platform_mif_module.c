@@ -65,7 +65,7 @@ static int platform_mif_module_probe(struct platform_device *pdev)
 	/* TODO: ADD EARLY BOARD INITIALIZATIONS IF REQUIRED */
 	/* platform_mif_init(); */
 
-	mif_node = kzalloc(sizeof(*mif_node), GFP_ATOMIC);
+	mif_node = kzalloc(sizeof(*mif_node), GFP_KERNEL);
 	if (!mif_node)
 		return -ENODEV;
 
@@ -183,7 +183,7 @@ void scsc_mif_abs_register(struct scsc_mif_abs_driver *driver)
 	struct mif_abs_node    *mif_node;
 
 	/* Add node in driver linked list */
-	mif_driver_node = kzalloc(sizeof(*mif_driver_node), GFP_ATOMIC);
+	mif_driver_node = kzalloc(sizeof(*mif_driver_node), GFP_KERNEL);
 	if (!mif_driver_node)
 		return;
 
@@ -218,7 +218,7 @@ void scsc_mif_mmap_register(struct scsc_mif_mmap_driver *mmap_driver)
 	struct mif_abs_node  *mif_node;
 
 	/* Add node in driver linked list */
-	mif_mmap_node = kzalloc(sizeof(*mif_mmap_node), GFP_ATOMIC);
+	mif_mmap_node = kzalloc(sizeof(*mif_mmap_node), GFP_KERNEL);
 	if (!mif_mmap_node)
 		return;
 

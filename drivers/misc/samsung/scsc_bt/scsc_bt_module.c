@@ -59,7 +59,6 @@ static bool call_usermode_helper;
 static char *envp[] = { "HOME=/", "PATH=/system/bin:/sbin:", NULL };
 static char *argv[] = { SCSC_BT_LOGGER, NULL };
 
-
 module_param(bluetooth_address, ullong, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(bluetooth_address,
 		 "Bluetooth address");
@@ -176,7 +175,8 @@ static int slsi_sm_bt_service_cleanup(bool allow_service_stop)
 
 		/* If slsi_sm_bt_service_cleanup_stop_service fails, then let
 		   recovery do the rest of the deinit later. */
-		if (!recovery_in_progress && allow_service_stop)
+		if (0 == atomic_read(&bt_service.error_count) &&
+		    allow_service_stop)
 			if (slsi_sm_bt_service_cleanup_stop_service() < 0) {
 				SCSC_TAG_DEBUG(BT_COMMON, "slsi_sm_bt_service_cleanup_stop_service failed. Recovery has been triggered\n");
 				goto done_error;
@@ -194,6 +194,11 @@ static int slsi_sm_bt_service_cleanup(bool allow_service_stop)
 		SCSC_TAG_DEBUG(BT_COMMON,
 			"cleanup protocol structure and main interrupts\n");
 		scsc_bt_shm_exit();
+
+		/* Cleanup AVDTP detections */
+		SCSC_TAG_DEBUG(BT_COMMON,
+			"cleanup ongoing avdtp detections\n");
+		scsc_avdtp_detect_exit();
 
 		/* Release the shared memory */
 		SCSC_TAG_DEBUG(BT_COMMON,
@@ -457,18 +462,6 @@ int slsi_sm_bt_service_start(void)
 	} else if (firm && firm->size) {
 		u32 u[SCSC_BT_ADDR_LEN];
 
-#ifdef CONFIG_SCSC_BT_BLUEZ
-		/* Convert the data into a native format */
-		if (sscanf(firm->data, "%04x %02X %06x",
-			   &u[0], &u[1], &u[2])
-		    == SCSC_BT_ADDR_LEN) {
-			bhcs->bluetooth_address_lap = u[2];
-			bhcs->bluetooth_address_uap = u[1];
-			bhcs->bluetooth_address_nap = u[0];
-		} else
-			SCSC_TAG_WARNING(BT_COMMON,
-				"data size incorrect = %zu\n", firm->size);
-#else
 		/* Convert the data into a native format */
 		if (sscanf(firm->data, "%02X:%02X:%02X:%02X:%02X:%02X",
 			   &u[0], &u[1], &u[2], &u[3], &u[4], &u[5])
@@ -480,7 +473,7 @@ int slsi_sm_bt_service_start(void)
 		} else
 			SCSC_TAG_WARNING(BT_COMMON,
 				"data size incorrect = %zu\n", firm->size);
-#endif
+
 		/* Relase the configuration information */
 		mx140_release_file(bt_service.maxwell_core, firm);
 		firm = NULL;
@@ -740,11 +733,6 @@ void slsi_bt_service_probe(struct scsc_mx_module_client *module_client,
 		recovery_in_progress = 0;
 	}
 
-	slsi_bt_notify_probe(bt_service.dev,
-			     &scsc_bt_shm_fops,
-			     &bt_service.error_count,
-			     &bt_service.read_wait);
-
 done:
 	mutex_unlock(&bt_start_mutex);
 }
@@ -763,8 +751,6 @@ static void slsi_bt_service_remove(struct scsc_mx_module_client *module_client,
 			      "BT service remove recovery, but no recovery in progress\n");
 		goto done;
 	}
-
-	slsi_bt_notify_remove();
 
 	if (reason == SCSC_MODULE_CLIENT_REASON_RECOVERY && recovery_in_progress) {
 		int ret;
@@ -860,6 +846,7 @@ static int slsi_bt_service_proc_show(struct seq_file *m, void *v)
 	char    allocated_text[BSMHCP_DATA_BUFFER_TX_ACL_SIZE + 1];
 	char    processed_text[BSMHCP_TRANSFER_RING_EVT_SIZE + 1];
 	size_t  index;
+	struct scsc_bt_avdtp_detect_hci_connection *cur = bt_service.avdtp_detect.connections;
 
 	seq_puts(m, "Driver statistics:\n");
 	seq_printf(m, "  write_wake_lock_count         = %zu\n",
@@ -911,16 +898,19 @@ static int slsi_bt_service_proc_show(struct seq_file *m, void *v)
 	seq_printf(m, "  processed                     = %s\n\n",
 		processed_text);
 
-	seq_printf(m, "  avdtp_signaling_src_cid       = %u\n",
-		bt_service.avdtp_detect.signal.src_cid);
-	seq_printf(m, "  avdtp_signaling_dst_cid       = %u\n",
-		bt_service.avdtp_detect.signal.dst_cid);
-	seq_printf(m, "  avdtp_streaming_src_cid       = %u\n",
-		bt_service.avdtp_detect.stream.src_cid);
-	seq_printf(m, "  avdtp_streaming_dst_cid       = %u\n",
-		bt_service.avdtp_detect.stream.dst_cid);
-	seq_printf(m, "  avdtp_hci_connection_handle   = %u\n\n",
-		bt_service.avdtp_detect.hci_connection_handle);
+	while (cur) {
+		seq_printf(m, "	 avdtp_hci_connection_handle   = %u\n\n",
+				   cur->hci_connection_handle);
+		seq_printf(m, "	 avdtp_signaling_src_cid	   = %u\n",
+				   cur->signal.src_cid);
+		seq_printf(m, "	 avdtp_signaling_dst_cid	   = %u\n",
+				   cur->signal.dst_cid);
+		seq_printf(m, "	 avdtp_streaming_src_cid	   = %u\n",
+				   cur->stream.src_cid);
+		seq_printf(m, "	 avdtp_streaming_dst_cid	   = %u\n",
+				   cur->stream.dst_cid);
+		cur = cur->next;
+	}
 	seq_puts(m, "Firmware statistics:\n");
 
 	mutex_lock(&bt_start_mutex);
@@ -1098,7 +1088,10 @@ static int __init scsc_bt_module_init(void)
 	scsc_mx_module_register_client_module(&bt_driver);
 
 	SCSC_TAG_DEBUG(BT_COMMON, "dev=%u class=%p\n",
-		       bt_service.device, bt_service.class);
+			   bt_service.device, bt_service.class);
+
+	spin_lock_init(&bt_service.avdtp_detect.lock);
+	spin_lock_init(&bt_service.avdtp_detect.fw_write_lock);
 	return 0;
 
 error:

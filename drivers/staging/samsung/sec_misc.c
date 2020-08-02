@@ -30,7 +30,6 @@
 #include <linux/firmware.h>
 #include <linux/wakelock.h>
 #include <linux/blkdev.h>
-#include <mach/gpio.h>
 #include <linux/sec_sysfs.h>
 
 static struct wake_lock sec_misc_wake_lock;
@@ -48,6 +47,8 @@ static struct miscdevice sec_misc_device = {
 	.fops = &sec_misc_fops,
 };
 
+/* To use CONFIG_SEC_DROP_CACHES, make Kconfig at a proper location */
+#ifdef CONFIG_SEC_DROP_CACHES
 /*
  * For Drop Caches
  */
@@ -64,7 +65,8 @@ static ssize_t drop_caches_show
 	(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret = 0;
-	return snprintf(buf, sizeof(buf), "%d\n", ret);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
 }
 
 static ssize_t drop_caches_store
@@ -96,12 +98,24 @@ static DEVICE_ATTR(drop_caches, S_IRUGO | S_IWUSR | S_IWGRP,\
 /*
  * End Drop Caches
  */
+#endif
 
+static ssize_t sec_misc_pesudo_show
+        (struct device *dev, struct device_attribute *attr, char *buf)
+{
+        int ret = 0;
 
+        return scnprintf(buf, PAGE_SIZE, "%d\n", ret);
+}
+
+static DEVICE_ATTR(sec_misc_pesudo, S_IRUGO, sec_misc_pesudo_show, NULL);
 struct device *sec_misc_dev;
 
 static struct device_attribute *sec_misc_attrs[] = {
+	&dev_attr_sec_misc_pesudo,
+#ifdef CONFIG_SEC_DROP_CACHES
 	&dev_attr_drop_caches,
+#endif
 };
 
 static int __init sec_misc_init(void)

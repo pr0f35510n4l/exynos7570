@@ -5,18 +5,24 @@
 #include <linux/delay.h>
 #include <linux/timer.h>
 #include <linux/slab.h>
-/*
-#include "hal_macros.h"
-#include "io_map.h"
-*/
+
 #define EVT0	(0)
 #define EVT1	(1)
 #define	S610_VER	(EVT1)
 
 #define USE_SPUR_CANCEL
-#define USE_NEW_SCAN
 
-#define FM_LOW_DRV_DELAY_MS  1
+#define USE_FILTER_SELECT_BY_FREQ
+#define MAX_FILTER_FREQ_NUM	6
+
+#define USE_NEW_SCAN
+#define VOLUME_CTRL_S610
+/*#undef VOLUME_CTRL_S610*/
+
+#define	USE_RDS_HW_DECODER
+#undef	USE_RDS_HW_DECODER
+
+#define	FM_LOW_DRV_DELAY_MS  1
 #define AGGR_RSSI_OFFSET (-114)
 
 #undef  TRUE
@@ -182,6 +188,27 @@ enum fm_int_src_mask_enum {
 	INT_RDS_BYTES_MASK = (0x0001 << 4),
 };
 
+#ifdef VOLUME_CTRL_S610
+enum fm_audio_gain_enum {
+	AUDIO_ATTENUATION_Max		= 0,
+	AUDIO_ATTENUATION_42dB		= 1,
+	AUDIO_ATTENUATION_39dB		= 2,
+	AUDIO_ATTENUATION_36dB		= 3,
+	AUDIO_ATTENUATION_33dB		= 4,
+	AUDIO_ATTENUATION_30dB		= 5,
+	AUDIO_ATTENUATION_27dB		= 6,
+	AUDIO_ATTENUATION_24dB		= 7,
+	AUDIO_ATTENUATION_21dB		= 8,
+	AUDIO_ATTENUATION_18dB		= 9,
+	AUDIO_ATTENUATION_15dB		= 10,
+	AUDIO_ATTENUATION_12dB		= 11,
+	AUDIO_ATTENUATION_9dB		= 12,
+	AUDIO_ATTENUATION_6dB		= 13,
+	AUDIO_ATTENUATION_3dB		= 14,
+	AUDIO_ATTENUATION_0dB		= 15
+};
+#endif
+
 /***************************************************************************/
 
 typedef struct {
@@ -252,6 +279,7 @@ typedef struct {
 	bool use_switched_blend;
 	bool use_soft_mute;
 	bool mute_forced;
+	bool mute_audio;
 	bool search_down;
 	bool use_rbds;
 	bool save_eblks;
@@ -299,6 +327,7 @@ typedef struct {
 	u32 band_limit_hi;
 } fm_tuner_state_s;
 
+#ifdef	USE_RDS_HW_DECODER
 typedef enum {
 	RDS_BLKTYPE_A	= 0,
 	RDS_BLKTYPE_B	= 1,
@@ -315,6 +344,27 @@ typedef enum {
 	RDS_STATE_PRE_SYNC,
 	RDS_STATE_FULL_SYNC
 } fm_rds_state_enum;
+#else
+typedef enum {
+	RDS_BLKTYPE_A   = 0,
+	RDS_BLKTYPE_B   = 1,
+	RDS_BLKTYPE_C   = 2,
+	RDS_BLKTYPE_D   = 3,
+	RDS_BLKTYPE_E   = 4,
+	RDS_NUM_BLOCK_TYPES = 5
+} fm_rds_block_type_enum;
+
+typedef enum {
+	RDS_STATE_FOUND_BL_A,
+	RDS_STATE_FOUND_BL_B,
+	RDS_STATE_FOUND_BL_C,
+	RDS_STATE_FOUND_BL_D,
+	RDS_STATE_HAVE_DATA,
+	RDS_STATE_PRE_SYNC,
+	RDS_STATE_FULL_SYNC,
+	RDS_STATE_INIT,
+} fm_rds_state_enum;
+#endif	/*USE_RDS_HW_DECODER*/
 
 typedef struct {
 	unsigned current_state :3;
@@ -349,7 +399,7 @@ typedef struct struct_fm_lo_setup {
 	u32 n_lodiv;
 } struct_fm_lo_setup;
 
- typedef struct struct_fm_rx_tune_info {
+typedef struct struct_fm_rx_tune_info {
 	struct_fm_rx_setup rx_setup;
 	struct_fm_lo_setup lo_setup;
 } struct_fm_rx_tune_info;
@@ -380,7 +430,7 @@ struct s610_low {
 	u16 fm_freq_steps[3];
 
 #ifdef USE_SPUR_CANCEL
-	u32 fm_spur[4];
+	u32 fm_spur[256];
 #endif
 	/* fm low level struct  -  end */
 };

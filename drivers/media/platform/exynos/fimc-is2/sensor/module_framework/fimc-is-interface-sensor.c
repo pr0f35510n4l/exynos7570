@@ -1391,7 +1391,7 @@ int get_num_of_frame_per_one_3aa(struct fimc_is_sensor_interface *itf,
 		if (max_fps >= 300) {
 			*num_of_frame = 10;
 		} else if (max_fps >= 240) {
-			*num_of_frame = 24;
+			*num_of_frame = 12;
 		} else if (max_fps >= 120) {
 			*num_of_frame = 4;
 		} else if (max_fps >= 60) {
@@ -2129,8 +2129,12 @@ static struct fimc_is_framemgr *get_csi_vc_framemgr(struct fimc_is_device_csi *c
 	} else {
 #endif
 		fimc_is_subdev_vc = csi->dma_subdev[ch];
-		if (!fimc_is_subdev_vc ||
-				!test_bit(FIMC_IS_SUBDEV_OPEN, &fimc_is_subdev_vc->state)) {
+		if (!fimc_is_subdev_vc) {
+			err("%s, fimc_is_subdev_vc is NULL", __func__);
+			return NULL;
+		}
+
+		if (!test_bit(FIMC_IS_SUBDEV_OPEN, &fimc_is_subdev_vc->state)) {
 			err("[SUB%d] is not opened", fimc_is_subdev_vc->vid);
 			return NULL;
 		}

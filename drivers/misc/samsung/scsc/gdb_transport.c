@@ -53,6 +53,7 @@ static void gdb_input_irq_handler(int irq, void *data)
 		if (num_bytes > 0 && num_bytes
 		    < (GDB_TRANSPORT_BUF_LENGTH - sizeof(uint32_t))) {
 			alloc_bytes = sizeof(char) * num_bytes;
+			/* This is called in atomic context so must use kmalloc with GFP_ATOMIC flag */
 			buf = kmalloc(alloc_bytes, GFP_ATOMIC);
 			/* 2nd payload (msg) */
 			mif_stream_read(&gdb_transport->mif_istream, buf, num_bytes);
@@ -141,7 +142,7 @@ int gdb_transport_init(struct gdb_transport *gdb_transport, struct scsc_mx *mx, 
 	uint32_t                  num_packets;
 	struct gdb_transport_node *gdb_transport_node;
 
-	gdb_transport_node = kzalloc(sizeof(*gdb_transport_node), GFP_ATOMIC);
+	gdb_transport_node = kzalloc(sizeof(*gdb_transport_node), GFP_KERNEL);
 	if (!gdb_transport_node)
 		return -EIO;
 
@@ -223,7 +224,7 @@ int gdb_transport_register_client(struct gdb_transport_client *gdb_client)
 	char                      *dev_uid;
 
 	/* Add node in modules linked list */
-	gdb_client_node = kzalloc(sizeof(*gdb_client_node), GFP_ATOMIC);
+	gdb_client_node = kzalloc(sizeof(*gdb_client_node), GFP_KERNEL);
 	if (!gdb_client_node)
 		return -ENOMEM;
 

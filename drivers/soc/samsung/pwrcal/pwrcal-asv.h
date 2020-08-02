@@ -13,6 +13,7 @@ struct cal_asv_ops {
 	int (*get_ids_info)(unsigned int domain);
 	void (*set_ssa0)(unsigned int id, unsigned int ssa0);
 	void (*set_ssa1)(unsigned int id, unsigned int gnum, unsigned int ssa1);
+	int (*get_cp_cpu_freq)(void);
 };
 
 extern struct cal_asv_ops cal_asv_ops;

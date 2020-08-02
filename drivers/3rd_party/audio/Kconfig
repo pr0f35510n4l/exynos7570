@@ -1,4 +1,0 @@
-#
-# audio driver configuration
-#
-source "drivers/3rd_party/audio/wm8994/Kconfig"

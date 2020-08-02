@@ -56,12 +56,12 @@ int fimc_is_i2c_s_pin(struct i2c_client *client, int state)
 	i2c_dev = client->dev.parent->parent;
 	pinctrl_i2c = devm_pinctrl_get_select(i2c_dev, pin_ctrl);
 	if (IS_ERR_OR_NULL(pinctrl_i2c)) {
-		printk(KERN_ERR "%s: Failed to configure i2c pin\n", __func__);
+	    printk(KERN_ERR "%s: Failed to configure i2c pin\n", __func__);
 	} else {
-		devm_pinctrl_put(pinctrl_i2c);
+	    devm_pinctrl_put(pinctrl_i2c);
 	}
 
-	return ret;
+	  return ret;
 }
 
 static int fimc_is_i2c0_probe(struct i2c_client *client,

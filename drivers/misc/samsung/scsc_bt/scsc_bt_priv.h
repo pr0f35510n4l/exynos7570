@@ -48,13 +48,8 @@
 #define HCI_EVENT_HARDWARE_ERROR_EVENT                  (0x10)
 
 #define SCSC_BT_CONF      "bluetooth/bt.hcf"
-#ifdef CONFIG_SCSC_BT_BLUEZ
-#define SCSC_BT_ADDR      "/csa/bluetooth/.bd_addr"
-#define SCSC_BT_ADDR_LEN  (3)
-#else
 #define SCSC_BT_ADDR      "/efs/bluetooth/bt_addr"
 #define SCSC_BT_ADDR_LEN  (6)
-#endif
 
 #define SCSC_H4_DEVICE_NAME             "scsc_h4_0"
 
@@ -109,30 +104,57 @@ enum scsc_bt_avdtp_detect_conn_req_direction_enum {
 	BT_AVDTP_CONN_REQ_DIR_OUTGOING,
 };
 
-struct scsc_bt_avdtp_detect_connection {
-	enum scsc_bt_avdtp_detect_state_enum		state;
-	u16										src_cid;
-	u16										dst_cid;
+enum scsc_bt_avdtp_detect_type {
+	BT_AVDTP_CONN_TYPE_SIGNAL = 0,
+	BT_AVDTP_CONN_TYPE_STREAM = 1,
 };
 
-struct scsc_bt_avdtp_detect_ongoing_signal {
-	struct scsc_bt_avdtp_detect_connection		incoming;
-	struct scsc_bt_avdtp_detect_connection		outgoing;
-	u16										hci_connection_handle;
-	struct scsc_bt_avdtp_detect_ongoing_signal	*next;
+struct scsc_bt_avdtp_detect_connection {
+	enum scsc_bt_avdtp_detect_type                  type;
+	enum scsc_bt_avdtp_detect_state_enum            state;
+	u16                                             src_cid;
+	u16                                             dst_cid;
 };
 
 struct scsc_bt_avdtp_detect_ongoing {
-	struct scsc_bt_avdtp_detect_ongoing_signal	*signals;
+	struct scsc_bt_avdtp_detect_connection		incoming_signal;
+	struct scsc_bt_avdtp_detect_connection		outgoing_signal;
 	struct scsc_bt_avdtp_detect_connection		incoming_stream;
 	struct scsc_bt_avdtp_detect_connection		outgoing_stream;
 };
 
+enum scsc_bt_avdtp_detect_tsep {
+	BT_AVDTP_TSEP_SRC = 0,
+	BT_AVDTP_TSEP_SNK = 1,
+};
+
+struct scsc_bt_avdtp_detect_src_snk {
+	enum scsc_bt_avdtp_detect_tsep          tsep;
+	struct scsc_bt_avdtp_detect_snk_seid    *local_snk_seids;
+	struct scsc_bt_avdtp_detect_snk_seid    *remote_snk_seids;
+	uint16_t                                local_snk_seid_candidate;
+	uint16_t                                remote_snk_seid_candidate;
+};
+
+struct scsc_bt_avdtp_detect_snk_seid {
+	uint8_t								seid;
+	struct scsc_bt_avdtp_detect_snk_seid	*next;
+};
+
+struct scsc_bt_avdtp_detect_hci_connection {
+	struct scsc_bt_avdtp_detect_ongoing             ongoing;
+	u16                                             hci_connection_handle;
+	struct scsc_bt_avdtp_detect_connection          signal;
+	struct scsc_bt_avdtp_detect_connection          stream;
+	struct scsc_bt_avdtp_detect_src_snk             tsep_detect;
+	struct scsc_bt_avdtp_detect_hci_connection      *next;
+	spinlock_t                                      lock;
+};
+
 struct scsc_bt_avdtp_detect {
-	struct scsc_bt_avdtp_detect_ongoing	ongoing;
-	u16									hci_connection_handle;
-	struct scsc_bt_avdtp_detect_connection	signal;
-	struct scsc_bt_avdtp_detect_connection	stream;
+	struct scsc_bt_avdtp_detect_hci_connection    *connections;
+	spinlock_t                                    lock;
+	spinlock_t                                    fw_write_lock;
 };
 
 struct scsc_bt_service {
@@ -223,29 +245,53 @@ extern struct scsc_bt_service bt_service;
 #define HCI_L2CAP_CON_RSP_RESULT_SUCCESS        (0x0000)
 #define HCI_L2CAP_CON_RSP_RESULT_REFUSED        (0x0002)
 
+
+#define HCI_L2CAP_CONF_SEID_OFFSET              6
+#define HCI_L2CAP_CONF_TSEP_OFFSET              7
+#define HCI_L2CAP_CONF_SEID_INFO_SIZE           2
+#define HCI_L2CAP_CONF_SEID(data, index)        (((u8)(*(data + index * HCI_L2CAP_CONF_SEID_INFO_SIZE + HCI_L2CAP_CONF_SEID_OFFSET)) >> 2) & 0x3F)
+#define HCI_L2CAP_CONF_TSEP_SRC                 0
+#define HCI_L2CAP_CONF_TSEP_SNK                 1
+#define HCI_L2CAP_CONF_TSEP(data, index)        (((u8)(*(data + index * HCI_L2CAP_CONF_SEID_INFO_SIZE + HCI_L2CAP_CONF_TSEP_OFFSET)) >> 3) & 0x1)
+#define HCI_L2CAP_SET_CONF_ACP_SEID_OFFSET      6
+#define HCI_L2CAP_SET_CONF_ACP_SEID(data)       (((u8)(*(data + HCI_L2CAP_SET_CONF_ACP_SEID_OFFSET)) >> 2) & 0x3F)
+
+
 #define L2CAP_AVDTP_PSM                 0x0019
 #define L2CAP_SIGNALING_CID             0x0001
 #define L2CAP_CODE_CONNECT_REQ          0x02
 #define L2CAP_CODE_CONNECT_RSP          0x03
+#define L2CAP_CODE_CONFIGURE_REQ        0x04
 #define L2CAP_CODE_DISCONNECT_REQ       0x06
 #define L2CAP_CODE_DISCONNECT_RSP       0x07
 
-#define AVDTP_MESSAGE_TYPE_OFFSET       4 /* Assuming only single packet type */
-#define AVDTP_MESSAGE_TYPE_MASK         0x03
-#define AVDTP_MESSAGE_TYPE(data)        ((u8)(*(data + AVDTP_MESSAGE_TYPE_OFFSET)) & AVDTP_MESSAGE_TYPE_MASK)
-#define AVDTP_MESSAGE_TYPE_RSP_ACCEPT   0x02
+#define AVDTP_MESSAGE_TYPE_OFFSET          4 /* Assuming only single packet type */
+#define AVDTP_MESSAGE_TYPE_MASK            0x03
+#define AVDTP_MESSAGE_TYPE(data)           ((u8)(*(data + AVDTP_MESSAGE_TYPE_OFFSET)) & AVDTP_MESSAGE_TYPE_MASK)
+#define AVDTP_MESSAGE_TYPE_CMD             0x00
+#define AVDTP_MESSAGE_TYPE_GENERAL_REJECT  0x01
+#define AVDTP_MESSAGE_TYPE_RSP_ACCEPT      0x02
+#define AVDTP_MESSAGE_TYPE_RSP_REJECT      0x03
 
 #define AVDTP_SIGNAL_ID_OFFSET          5 /* Assuming only single packet type */
 #define AVDTP_SIGNAL_ID_MASK            0x1F
 #define AVDTP_SIGNAL_ID(data)           ((u8)(*(data + AVDTP_SIGNAL_ID_OFFSET)) & AVDTP_SIGNAL_ID_MASK)
 
+#define AVDTP_SIGNAL_ID_DISCOVER        0x01
+#define AVDTP_SIGNAL_ID_SET_CONF        0x03
 #define AVDTP_SIGNAL_ID_OPEN            0x06
 #define AVDTP_SIGNAL_ID_START           0x07
 #define AVDTP_SIGNAL_ID_CLOSE           0x08
 #define AVDTP_SIGNAL_ID_SUSPEND         0x09
 #define AVDTP_SIGNAL_ID_ABORT           0x0A
 
-#define AVDTP_SIGNAL_FLAG_MASK			(0x80000000)
+#define AVDTP_SIGNAL_FLAG_MASK          (0x80000000)
+#define AVDTP_SNK_FLAG_MASK             (0x40000000)
+#define AVDTP_MESSAGE_COUNT_MASK        (0x30000000)
+#define AVDTP_GET_MESSAGE_COUNT(data)   ((data & AVDTP_MESSAGE_COUNT_MASK) >> 28)
+
+#define AVDTP_SNK_FLAG_TD_MASK             (0x00000001)
+#define AVDTP_OPEN_FLAG_TD_MASK            (0x00000002)
 
 extern uint16_t avdtp_signaling_src_cid;
 extern uint16_t avdtp_signaling_dst_cid;
@@ -256,20 +302,14 @@ extern uint16_t avdtp_hci_connection_handle;
 #define AVDTP_DETECT_SIGNALING_IGNORE   0
 #define AVDTP_DETECT_SIGNALING_ACTIVE   1
 #define AVDTP_DETECT_SIGNALING_INACTIVE 2
+#define AVDTP_DETECT_SIGNALING_OPEN     3
 
 void scsc_avdtp_detect_rxtx(u16 hci_connection_handle, const unsigned char *data, uint16_t length, bool is_tx);
-void scsc_avdtp_detect_reset(bool reset_signal, bool reset_signal_ongoing, bool reset_stream, bool reset_stream_ongoing);
 bool scsc_avdtp_detect_reset_connection_handle(uint16_t hci_connection_handle);
+bool scsc_bt_shm_h4_avdtp_detect_write(uint32_t flags,
+									   uint16_t l2cap_cid,
+									   uint16_t hci_connection_handle);
+void scsc_avdtp_detect_exit(void);
 
-#ifdef CONFIG_SCSC_BT_BLUEZ
-void slsi_bt_notify_probe(struct device *dev,
-			  const struct file_operations *fs,
-			  atomic_t *error_count,
-			  wait_queue_head_t *read_wait);
-void slsi_bt_notify_remove(void);
-#else
-#define slsi_bt_notify_probe(dev, fs, error_count, read_wait)
-#define slsi_bt_notify_remove()
-#endif
 
 #endif /* __SCSC_BT_PRIV_H */

@@ -61,3 +61,6 @@ obj-$(CONFIG_KEYBOARD_XTKBD)		+= xtkbd.o
 obj-$(CONFIG_KEYBOARD_W90P910)		+= w90p910_keypad.o
 obj-$(CONFIG_KEYBOARD_S2MPU06)		+= s2mpu06_key.o
 obj-$(CONFIG_KEYBOARD_S2MPW01)		+= s2mpw01_key.o
+obj-$(CONFIG_KEYBOARD_TC300K)		+= tc300k.o
+obj-$(CONFIG_KEYBOARD_MELFAS_MHS204) += melfas_mip4/
+obj-$(CONFIG_KEYBOARD_CYPRESS_TOUCH_MBR31X5)	+= cypress/

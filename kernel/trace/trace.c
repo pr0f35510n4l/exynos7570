@@ -2042,6 +2042,13 @@ void trace_printk_init_buffers(void)
 	if (alloc_percpu_trace_buffer())
 		return;
 
+	/*
+	 * When tracing is off, trace_printk() calls have no effect
+	 * When tracing is enabled, instead, trace_printk() data can be made
+	 * available to a developer with far less overhead than normal printk() output
+	 * SEC turns tracing off at DEBUG LEVEL LOW (USER mode)
+	 */
+#if 0
 	/* trace_printk() is for debug use only. Don't use it in production. */
 
 	pr_warning("\n**********************************************************\n");
@@ -2057,7 +2064,7 @@ void trace_printk_init_buffers(void)
 	pr_warning("**                                                      **\n");
 	pr_warning("**   NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE   **\n");
 	pr_warning("**********************************************************\n");
-
+#endif
 	/* Expand the buffers to set size */
 	tracing_update_buffers();
 

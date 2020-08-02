@@ -337,7 +337,7 @@ static int wm8994_device_init(struct wm8994 *wm8994, int irq)
 	}
 	pdata = &wm8994->pdata;
 
-	ret = wm8994_set_pdata_from_of(wm8994);//parse dts
+	ret = wm8994_set_pdata_from_of(wm8994);
 	if (ret != 0)
 		return ret;
 
@@ -413,7 +413,6 @@ static int wm8994_device_init(struct wm8994 *wm8994, int irq)
 		dev_err(wm8994->dev, "Failed to read ID register\n");
 		goto err_enable;
 	}
-	dev_err(wm8994->dev, "0x00=0x%x\n", ret);
 	switch (ret) {
 	case 0x1811:
 		devname = "WM1811";
@@ -451,7 +450,6 @@ static int wm8994_device_init(struct wm8994 *wm8994, int irq)
 	}
 	wm8994->revision = ret & WM8994_CHIP_REV_MASK;
 	wm8994->cust_id = (ret & WM8994_CUST_ID_MASK) >> WM8994_CUST_ID_SHIFT;
-	dev_err(wm8994->dev, "xue: revision=%d, cust_id=%d\n", wm8994->revision, wm8994->cust_id);
 
 	switch (wm8994->type) {
 	case WM8994:
@@ -543,15 +541,12 @@ static int wm8994_device_init(struct wm8994 *wm8994, int irq)
 
 	wm8994->irq_base = pdata->irq_base;
 	wm8994->gpio_base = pdata->gpio_base;
-	dev_err(wm8994->dev, "irq_base=%d, gpio_base=%d\n", wm8994->irq_base, wm8994->gpio_base);
 
 	/* GPIO configuration is only applied if it's non-zero */
 	for (i = 0; i < ARRAY_SIZE(pdata->gpio_defaults); i++) {
-		if (pdata->gpio_defaults[i] != WM8994_CONFIGURE_GPIO) {
+		if (pdata->gpio_defaults[i]) {
 			wm8994_set_bits(wm8994, WM8994_GPIO_1 + i,
 					0xffff, pdata->gpio_defaults[i]);
-			dev_err(wm8994->dev, "XUE: %#x:%#x\n", WM8994_GPIO_1 + i, 
-				wm8994_reg_read(wm8994, WM8994_GPIO_1 + i));
 		}
 	}
 
@@ -637,13 +632,11 @@ static int wm8994_i2c_probe(struct i2c_client *i2c,
 	i2c_set_clientdata(i2c, wm8994);
 	wm8994->dev = &i2c->dev;
 	wm8994->irq = i2c->irq;
-	dev_err(wm8994->dev, "wm8994->irq=%d\n", wm8994->irq);
 
 	if (i2c->dev.of_node) {
 		of_id = of_match_device(wm8994_of_match, &i2c->dev);
 		if (of_id)
 			wm8994->type = (enum wm8994_type)of_id->data;
-			dev_err(wm8994->dev, "wm8994->type=%d\n", wm8994->type);
 	} else {
 		wm8994->type = id->driver_data;
 	}

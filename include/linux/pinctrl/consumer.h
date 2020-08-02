@@ -25,17 +25,6 @@ struct device;
 #ifdef CONFIG_PINCTRL
 
 /* External interface to pin control */
-extern int pin_config_get(const char *dev_name, const char *name,
-                          unsigned long *config);        
-extern int pin_config_set(const char *dev_name, const char *name,
-                          unsigned long config);         
-extern int pin_config_group_get(const char *dev_name,
-                                const char *pin_group,         
-                                unsigned long *config);        
-extern int pin_config_group_set(const char *dev_name,
-                                const char *pin_group,         
-                                unsigned long config); 
-
 extern int pinctrl_request_gpio(unsigned gpio);
 extern void pinctrl_free_gpio(unsigned gpio);
 extern int pinctrl_gpio_direction_input(unsigned gpio);

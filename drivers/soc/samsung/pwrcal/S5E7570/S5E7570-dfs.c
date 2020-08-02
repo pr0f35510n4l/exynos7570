@@ -279,6 +279,18 @@ struct pwrcal_clk_set dfscam_en_list[] = {
 	{CLK_NONE,	0,	-1},
 };
 
+static struct dfs_switch dfscp_switches[] = {
+};
+
+static struct dfs_table dfscp_table = {
+	.switches = dfscp_switches,
+	.num_of_switches = ARRAY_SIZE(dfscp_switches),
+};
+
+struct pwrcal_clk_set dfscp_en_list[] = {
+	{CLK_NONE,	0,	-1},
+};
+
 static int dfscpucl0_get_rate_table(unsigned long *table)
 {
 	return dfs_get_rate_table(&dfscpucl0_table, table);
@@ -351,12 +363,22 @@ static struct vclk_dfs_ops dfscam_dfsops = {
 	.get_rate_table = dfscam_get_rate_table,
 };
 
+static int dfscp_get_rate_table(unsigned long *table)
+{
+	return dfs_get_rate_table(&dfscp_table, table);
+}
+
+static struct vclk_dfs_ops dfscp_dfsops = {
+	.get_rate_table = dfscp_get_rate_table,
+};
+
 static DEFINE_SPINLOCK(dvfs_cpucl0_lock);
 static DEFINE_SPINLOCK(dvfs_g3d_lock);
 static DEFINE_SPINLOCK(dvfs_mif_lock);
 static DEFINE_SPINLOCK(dvfs_int_lock);
 static DEFINE_SPINLOCK(dvfs_disp_lock);
 static DEFINE_SPINLOCK(dvfs_cam_lock);
+static DEFINE_SPINLOCK(dvs_cp_lock);
 
 DFS(dvfs_cpucl0) = {
 	.vclk.type	= vclk_group_dfs,
@@ -439,6 +461,19 @@ DFS(dvfs_cam) = {
 	.dfsops		= &dfscam_dfsops,
 };
 
+DFS(dvs_cp) = {
+	.vclk.type	= vclk_group_dfs,
+	.vclk.parent	= VCLK(pxmxdx_top),
+	.vclk.ref_count	= 0,
+	.vclk.vfreq	= 0,
+	.vclk.name	= "dvs_cp",
+	.vclk.ops	= &dfs_ops,
+	.lock		= &dvs_cp_lock,
+	.en_clks	= dfscp_en_list,
+	.table		= &dfscp_table,
+	.dfsops		= &dfscp_dfsops,
+};
+
 void dfs_set_clk_information(struct pwrcal_vclk_dfs *dfs)
 {
 	int i, j;
@@ -494,6 +529,7 @@ void dfs_init(void)
 	dfs_set_clk_information(&vclk_dvfs_int);
 	dfs_set_clk_information(&vclk_dvfs_cam);
 	dfs_set_clk_information(&vclk_dvfs_disp);
+	dfs_set_clk_information(&vclk_dvs_cp);
 
 	dfs_dram_init();
 }

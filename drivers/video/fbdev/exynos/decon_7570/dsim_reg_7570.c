@@ -458,13 +458,13 @@ void dsim_reg_set_config(u32 id, struct decon_lcd *lcd_info, u32 data_lane_cnt)
 	if (lcd_info->mode == DECON_VIDEO_MODE) {
 		dsim_reg_disable_hsa(id, 0);
 		dsim_reg_disable_hbp(id, 0);
-		dsim_reg_disable_hfp(id, 0);
+		dsim_reg_disable_hfp(id, 1);
 		dsim_reg_disable_hse(id, 0);
 		dsim_reg_set_hsync_preserve(id, 0);
 		dsim_reg_set_burst_mode(id, 1);
 		dsim_reg_set_sync_inform(id, 0);
 		dsim_reg_enable_mflush(id, 1);
-		dsim_reg_enable_clocklane_stop_start(id, 1);
+		dsim_reg_enable_clocklane_stop_start(id, lcd_info->clklane_onoff);
 	} else if (lcd_info->mode == DECON_MIPI_COMMAND_MODE) {
 		dsim_reg_enable_noncontinuous_clock(id, 1);
 		dsim_reg_enable_mflush(id, 1);
@@ -849,7 +849,7 @@ void dsim_reg_force_dphy_stop_state(u32 id, u32 en)
 	dsim_write_mask(id, DSIM_ESCMODE, val, DSIM_ESCMODE_FORCE_STOP_STATE);
 }
 
-void dsim_reg_wr_tx_header(u32 id, u32 data_id, unsigned long data0, u32 data1)
+void dsim_reg_wr_tx_header(u32 id, u32 data_id, u32 data0, u32 data1)
 {
 	u32 val = DSIM_PKTHDR_ID(data_id) | DSIM_PKTHDR_DATA0(data0) |
 		DSIM_PKTHDR_DATA1(data1);
@@ -950,14 +950,6 @@ void dsim_reg_set_standby(u32 id, u32 en)
 	dsim_write_mask(id, DSIM_SFR_CTRL, val, DSIM_SFR_CTRL_STANDBY);
 }
 
-void dsim_reg_change_cmd_transfer_mode(u32 id, u32 lp)
-{
-
-	dsim_reg_set_standby(id, 0);
-	dsim_reg_set_cmd_transfer_mode(id, lp);
-	dsim_reg_set_standby(id, 1);
-}
-
 static int dsim_reg_get_dphy_timing(u32 hs_clk, u32 esc_clk, struct dphy_timing_value *t)
 {
 	int i = sizeof(dphy_timing) / sizeof(dphy_timing[0]) - 1;
@@ -1009,9 +1001,10 @@ int dsim_reg_init(u32 id, struct decon_lcd *lcd_info, u32 data_lane_cnt, struct 
 	 */
 	if (dsim_read_mask(id, DSIM_CLKCTRL, DSIM_CLKCTRL_TX_REQUEST_HSCLK)) {
 		dsim_info("dsim%d is probed with LCD ON UBOOT\n", id);
-		dsim_reg_init_probe(id, lcd_info, data_lane_cnt, clks);
-		/* If reg_init_probe() sequence is not equal to reg_init()
-		   then just return. */
+		if(lcd_info->mode == DECON_MIPI_COMMAND_MODE)
+			dsim_reg_init_probe(id, lcd_info, data_lane_cnt, clks);
+			/* If reg_init_probe() sequence is not equal to reg_init()
+			   then just return. */
 		ret = -EBUSY;
 	}
 

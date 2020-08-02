@@ -219,7 +219,7 @@ void client_module_probe(struct scsc_mx_module_client *module_client, struct scs
 
 	SCSC_TAG_ERR(MXMAN_TEST, "mx140:\n");
 
-	test = kzalloc(sizeof(*test), GFP_ATOMIC);
+	test = kzalloc(sizeof(*test), GFP_KERNEL);
 	if (!test)
 		return;
 

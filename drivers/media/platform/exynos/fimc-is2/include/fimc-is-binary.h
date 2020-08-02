@@ -29,7 +29,11 @@
 #define FIMC_IS_SETFILE_SDCARD_PATH		"/data/media/0/"
 #define FIMC_IS_FW_SDCARD			"/data/media/0/fimc_is_fw.bin"
 #define FIMC_IS_FW				"fimc_is_fw.bin"
+#ifdef CONFIG_SAMSUNG_PRODUCT_SHIP
+#define FIMC_IS_ISP_LIB_SDCARD_PATH		NULL
+#else
 #define FIMC_IS_ISP_LIB_SDCARD_PATH		"/data/media/0/"
+#endif
 #define FIMC_IS_REAR_CAL_SDCARD_PATH		"/data/media/0/"
 #define FIMC_IS_FRONT_CAL_SDCARD_PATH		"/data/media/0/"
 #else

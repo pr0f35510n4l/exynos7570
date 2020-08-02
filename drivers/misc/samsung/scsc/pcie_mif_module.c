@@ -65,7 +65,7 @@ static int pcie_mif_module_probe(struct pci_dev *pdev, const struct pci_device_i
 	struct mif_abs_node *mif_node;
 	struct scsc_mif_abs *mif_abs;
 
-	mif_node = kzalloc(sizeof(*mif_node), GFP_ATOMIC);
+	mif_node = kzalloc(sizeof(*mif_node), GFP_KERNEL);
 	if (!mif_node)
 		return -ENODEV;
 
@@ -118,7 +118,7 @@ void scsc_mif_abs_register(struct scsc_mif_abs_driver *driver)
 	struct device          *dev;
 
 	/* Add node in driver linked list */
-	mif_driver_node = kzalloc(sizeof(*mif_driver_node), GFP_ATOMIC);
+	mif_driver_node = kzalloc(sizeof(*mif_driver_node), GFP_KERNEL);
 	if (!mif_driver_node)
 		return;
 
@@ -154,7 +154,7 @@ void scsc_mif_mmap_register(struct scsc_mif_mmap_driver *mmap_driver)
 	struct mif_abs_node  *mif_node;
 
 	/* Add node in driver linked list */
-	mif_mmap_node = kzalloc(sizeof(*mif_mmap_node), GFP_ATOMIC);
+	mif_mmap_node = kzalloc(sizeof(*mif_mmap_node), GFP_KERNEL);
 	if (!mif_mmap_node)
 		return;
 

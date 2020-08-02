@@ -15,7 +15,6 @@ menuconfig WLAN
 
 	  http://wireless.kernel.org/en/users/Drivers
 
-
 if WLAN
 
 config PCMCIA_RAYCS
@@ -285,5 +284,5 @@ source "drivers/net/wireless/mwifiex/Kconfig"
 source "drivers/net/wireless/cw1200/Kconfig"
 source "drivers/net/wireless/rsi/Kconfig"
 source "drivers/net/wireless/scsc/Kconfig"
-endif
-# WLAN
+
+endif # WLAN

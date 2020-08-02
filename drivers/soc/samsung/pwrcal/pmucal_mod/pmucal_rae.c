@@ -130,6 +130,7 @@ void pmucal_rae_save_seq(struct pmucal_seq *seq, unsigned int seq_size)
 	int i;
 
 	exynos_ss_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
 
 	for (i = 0; i < seq_size; i++) {
 		switch (seq[i].access_type) {
@@ -150,6 +151,7 @@ void pmucal_rae_save_seq(struct pmucal_seq *seq, unsigned int seq_size)
 	}
 
 	exynos_ss_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
 }
 
 int pmucal_rae_restore_seq(struct pmucal_seq *seq, unsigned int seq_size)
@@ -157,6 +159,7 @@ int pmucal_rae_restore_seq(struct pmucal_seq *seq, unsigned int seq_size)
 	int i, ret;
 
 	exynos_ss_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
 
 	for (i = 0; i < seq_size; i++) {
 		if (seq[i].need_skip) {
@@ -208,6 +211,7 @@ int pmucal_rae_restore_seq(struct pmucal_seq *seq, unsigned int seq_size)
 	}
 
 	exynos_ss_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
 
 	return 0;
 }

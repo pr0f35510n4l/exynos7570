@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -94,17 +94,6 @@
 
 #define IEEE80211_FC(type, stype) (u16)(type | stype)
 
-struct wmm_information_element {
-	/* Element ID: 221 (0xdd); Length: 7 */
-	/* required fields for WMM version 1 */
-	u8 oui[3]; /* 00:50:f2 */
-	u8 oui_type; /* 2 */
-	u8 oui_subtype; /* 0 */
-	u8 version; /* 1 for WMM version 1.0 */
-	u8 qos_info; /* AP/STA specific QoS info */
-} __packed;
-
-
 /* WMM TSPEC Element */
 struct wmm_tspec_element {
 	char eid;         /* 221 = 0xdd */
@@ -151,6 +140,7 @@ struct cac_tspec {
 	struct cac_tspec         *next;
 	int                      id;
 	struct wmm_tspec_element tspec;
+	u8                      psb_specified;
 	int                      ebw;
 	int                      accepted;
 	u8                       dialog_token;
@@ -185,7 +175,8 @@ int cac_ctrl_send_addts(struct slsi_dev *sdev, char *args);
 int cac_ctrl_send_delts(struct slsi_dev *sdev, char *args);
 int cac_update_local_tspec(struct slsi_dev *sdev, u16 msdu_lifetime, struct wmm_tspec_element *tspec);
 int cac_get_active_tspecs(struct cac_activated_tspec **tspecs);
-void cac_deactivate_tspecs(struct slsi_dev *sdev);
+void cac_delete_tspec_list(struct slsi_dev *sdev);
 int cac_ctrl_delete_tspec(struct slsi_dev *sdev, char *args);
 void cac_rx_wmm_action(struct slsi_dev *sdev, struct net_device *netdev, struct ieee80211_mgmt *data, size_t len);
+void cac_update_roam_traffic_params(struct slsi_dev *sdev, struct net_device *dev);
 #endif /* CAC_H */

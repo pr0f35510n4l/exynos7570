@@ -119,8 +119,8 @@ int slsi_tx_data(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *
 	if (!ndev_vif->activated)
 		return -EINVAL;
 
-	if ((ndev_vif->vif_type == FAPI_VIFTYPE_AP || ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) && !ndev_vif->peer_sta_records) {
-		SLSI_NET_DBG3(dev, SLSI_TX, "AP/IBSS with no STAs associated, ignore TX frame\n");
+	if ((ndev_vif->vif_type == FAPI_VIFTYPE_AP) && !ndev_vif->peer_sta_records) {
+		SLSI_NET_DBG3(dev, SLSI_TX, "AP with no STAs associated, ignore TX frame\n");
 		return -EINVAL;
 	}
 
@@ -186,8 +186,7 @@ int slsi_tx_data(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *
 	SCSC_HIP4_SAMPLER_PKT_TX(sdev->minor_prof, fapi_get_u16(skb, u.ma_unitdata_req.host_tag));
 #endif
 	/* by default the priority is set to contention. It is overridden and set appropriate
-	 * priority if peer supports QoS. The broadcast/multicast frames are sent in non-QoS except Oxygen.
-	 * The broadcast/multicast frames are sent in QoS in case of Oxygen.
+	 * priority if peer supports QoS. The broadcast/multicast frames are sent in non-QoS .
 	 */
 	fapi_set_u16(skb, u.ma_unitdata_req.priority,                FAPI_PRIORITY_CONTENTION);
 
@@ -257,71 +256,7 @@ int slsi_tx_data(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *
 				slsi_kfree_skb(skb);
 			return -EIO;
 		}
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	/* AD-HOC MODE */
-	} else if (ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) {
-		/* As Oxygen network requires that QoS is mandatory.*/
-		if (SLSI_IS_MULTICAST_QUEUE_MAPPING(skb->queue_mapping)) {
-			/* Mapping priority from the DSCP field for IP packets. */
-			if (be16_to_cpu(eth_hdr(skb)->h_proto) == ETH_P_IP)
-				fapi_set_u16(skb, u.ma_unitdata_req.priority, (ip_hdr(skb)->tos >> 5));
-			/* Setting the priority = 0 for non-IP packets(e.g. ARP messages). */
-			else
-				fapi_set_u16(skb, u.ma_unitdata_req.priority, FAPI_PRIORITY_QOS_UP0);
-
-			/* Enable RMC if required */
-			if (!is_broadcast_ether_addr(skb_mac_header(skb)) &&
-			    !is_zero_ether_addr(ndev_vif->ibss.rmc_addr) &&
-			    memcmp(skb_mac_header(skb), ndev_vif->ibss.rmc_addr, ETH_ALEN)) {
-				int ret_rmc = 0;
-
-				ret_rmc = slsi_mlme_enable_ibss_rmc(sdev, dev, skb_mac_header(skb));
-				if (ret_rmc == FAPI_RESULTCODE_SUCCESS)
-					SLSI_ETHER_COPY(ndev_vif->ibss.rmc_addr, skb_mac_header(skb));
-				else
-					SLSI_NET_ERR(dev, "Failed 2nd mlme_start_txrmc_req: %u\n", ret_rmc);
-			}
-			ret = scsc_wifi_fcq_transmit_data(dev,
-							  &ndev_vif->ap.group_data_qs,
-							  slsi_frame_priority_to_ac_queue(skb->priority),
-							  sdev,
-							  (cb->colour & 0x6) >> 1,
-							  (cb->colour & 0xf8) >> 3);
-			if (ret < 0) {
-				SLSI_NET_DBG3(dev, SLSI_TX, "no fcq for groupcast, dropping TX frame\n");
-				/* Free the local copy here ..if any */
-				if (original_skb)
-					slsi_kfree_skb(skb);
-				return ret;
-			}
-			ret = scsc_wifi_transmit_frame(&sdev->hip4_inst, false, skb);
-			if (ret == NETDEV_TX_OK) {
-				/**
-				 * Frees the original since the copy has already
-				 * been freed downstream
-				 */
-				if (original_skb)
-					slsi_kfree_skb(original_skb);
-				return ret;
-			} else if (ret < 0) {
-				/* scsc_wifi_transmit_frame failed, decrement BoT counters */
-				scsc_wifi_fcq_receive_data(dev,
-							   &ndev_vif->ap.group_data_qs,
-							   slsi_frame_priority_to_ac_queue(skb->priority),
-							   sdev,
-							   (cb->colour & 0x6) >> 1,
-							   (cb->colour & 0xf8) >> 3);
-				if (original_skb)
-					slsi_kfree_skb(skb);
-				return ret;
-			}
-			if (original_skb)
-				slsi_kfree_skb(skb);
-			return -EIO;
-		}
-#endif
 	}
-
 	slsi_spinlock_lock(&ndev_vif->peer_lock);
 
 	peer = slsi_get_peer_from_mac(sdev, dev, eth_hdr(skb)->h_dest);
@@ -340,20 +275,9 @@ int slsi_tx_data(struct slsi_dev *sdev, struct net_device *dev, struct sk_buff *
 	 * the ma_unitdata_req.priority field. For non-QoS assocations, the ma_unitdata_req.
 	 * priority field requires FAPI_PRIORITY_CONTENTION.
 	 */
-
-	if (peer->qos_enabled) {
+	if (peer->qos_enabled)
 		fapi_set_u16(skb, u.ma_unitdata_req.priority, skb->priority);
 
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-		if (ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC)
-			if ((ndev_vif->ibss.ba_tx_userpri ^ peer->ba_tx_userpri) & ndev_vif->ibss.ba_tx_userpri &&
-			    peer->ba_tx_state & SLSI_AMPDU_F_OPERATIONAL)
-				if (slsi_ibss_enable_blockack(sdev, dev, peer, ndev_vif->ibss.ba_tx_userpri) != 0)
-					/* Just failure of IBSS BA setup but still it can send unicast by non-AMPDU */
-					SLSI_NET_DBG3(dev, SLSI_TX, "FAIL'ed to set up IBSS TX BlockAck\n");
-
-#endif          /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
-	}
 	slsi_debug_frame(sdev, dev, skb, "TX");
 
 	ret = scsc_wifi_fcq_transmit_data(dev, &peer->data_qs,
@@ -451,8 +375,7 @@ int slsi_tx_data_lower(struct slsi_dev *sdev, struct sk_buff *skb)
 	ndev_vif = netdev_priv(dev);
 	rcu_read_unlock();
 
-	if (is_multicast_ether_addr(dest) &&
-	    ((ndev_vif->vif_type == FAPI_VIFTYPE_AP) || (ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC))) {
+	if (is_multicast_ether_addr(dest) && ((ndev_vif->vif_type == FAPI_VIFTYPE_AP))) {
 		if (scsc_wifi_fcq_transmit_data(dev, &ndev_vif->ap.group_data_qs,
 						slsi_frame_priority_to_ac_queue(skb->priority),
 						sdev,

@@ -177,12 +177,6 @@ static void s2mpw01_irq_unmask(struct irq_data *data)
 		return;
 
 	s2mpw01->irq_masks_cur[irq_data->group] &= ~irq_data->mask;
-
-	pr_info("%s : topoff_status %d, irq_masks_cur[3] 0x%x\n", __func__,
-	s2mpw01->topoff_mask_status, s2mpw01->irq_masks_cur[3]);
-
-	if(s2mpw01->topoff_mask_status == 0)
-		s2mpw01->irq_masks_cur[3] |= 0x04;
 }
 
 static struct irq_chip s2mpw01_irq_chip = {

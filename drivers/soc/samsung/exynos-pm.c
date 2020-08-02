@@ -15,6 +15,9 @@
 #include <linux/wakeup_reason.h>
 #include <linux/gpio.h>
 #include <linux/syscore_ops.h>
+#ifdef CONFIG_SEC_DEBUG
+#include <linux/sec_debug.h>
+#endif
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/slab.h>
@@ -30,6 +33,26 @@
 
 #define WAKEUP_STAT_EINT                (1 << 0)
 #define WAKEUP_STAT_RTC_ALARM           (1 << 1)
+#define WAKEUP_STAT_RTC_TICK		(1 << 2)
+#define WAKEUP_STAT_TRTC_ALARM		(1 << 3)
+#define WAKEUP_STAT_TRTC_TICK		(1 << 4)
+#define WAKEUP_STAT_MMC0		(1 << 9)
+#define WAKEUP_STAT_MMC1		(1 << 10)
+#define WAKEUP_STAT_MMC2		(1 << 11)
+#define WAKEUP_STAT_I2S			(1 << 13)
+#define WAKEUP_STAT_TIMER		(1 << 14)
+#define WAKEUP_STAT_WIFI_ACTIVE		(1 << 19)
+#define WAKEUP_STAT_CP_RESET_REQ	(1 << 20)
+#define WAKEUP_STAT_GNSS_WAKEUP_REQ	(1 << 21)
+#define WAKEUP_STAT_GNSS_RESET_REQ	(1 << 22)
+#define WAKEUP_STAT_GNSS_ACTIVE		(1 << 23)
+#define WAKEUP_STAT_INT_MBOX_CP		(1 << 24)
+#define WAKEUP_STAT_CP_ACTIVE		(1 << 25)
+#define WAKEUP_STAT_INT_MBOX_GNSS	(1 << 26)
+#define WAKEUP_STAT_INT_MBOX_WIFI	(1 << 27)
+#define WAKEUP_STAT_CORTEXM0_APM	(1 << 28)
+#define WAKEUP_STAT_WIFI_RESET_REQ	(1 << 29)
+
 /*
  * PMU register offset
  */
@@ -70,6 +93,12 @@ static void exynos_show_wakeup_reason_eint(void)
 	bool found = 0;
 	unsigned int val;
 
+	pr_info("EINT_PEND: ");
+	for (i = 0, size = 8; i < pm_info->num_eint; i += size)
+		pr_info("0x%02x ", __raw_readl(EXYNOS_EINT_PEND(pm_info->eint_base, i)));
+
+	pr_info("\n");
+
 	exynos_pmu_read(EXYNOS_PMU_EINT_WAKEUP_MASK, &val);
 	eint_wakeup_mask = val;
 
@@ -99,19 +128,6 @@ static void exynos_show_wakeup_reason_eint(void)
 		pr_info("%s Resume caused by unknown EINT\n", EXYNOS_PM_PREFIX);
 }
 
-static void exynos_show_wakeup_registers(unsigned long wakeup_stat)
-{
-	int i, size;
-
-	pr_info("WAKEUP_STAT: 0x%08lx\n", wakeup_stat);
-
-	pr_info("EINT_PEND: ");
-	for (i = 0, size = 8; i < pm_info->num_eint; i += size)
-		pr_info("0x%02x ", __raw_readl(EXYNOS_EINT_PEND(pm_info->eint_base, i)));
-
-	pr_info("\n");
-}
-
 static void exynos_show_wakeup_reason(bool sleep_abort)
 {
 	unsigned int wakeup_stat;
@@ -134,12 +150,50 @@ static void exynos_show_wakeup_reason(bool sleep_abort)
 
 	exynos_pmu_read(EXYNOS_PMU_WAKEUP_STAT, &wakeup_stat);
 
-	exynos_show_wakeup_registers(wakeup_stat);
+	pr_info("%s WAKEUP_STAT: 0x%08x\n", EXYNOS_PM_PREFIX, wakeup_stat);
 
-	if (wakeup_stat & WAKEUP_STAT_RTC_ALARM)
-		pr_info("%s Resume caused by RTC alarm\n", EXYNOS_PM_PREFIX);
-	else if (wakeup_stat & WAKEUP_STAT_EINT)
+	if (wakeup_stat & WAKEUP_STAT_EINT)
 		exynos_show_wakeup_reason_eint();
+	else if (wakeup_stat & WAKEUP_STAT_RTC_ALARM)
+		pr_info("%s Resume caused by RTC alarm\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_RTC_TICK)
+		pr_info("%s Resume caused by RTC tick\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_TRTC_ALARM)
+		pr_info("%s Resume caused by TRTC alarm\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_TRTC_TICK)
+		pr_info("%s Resume caused by TRTC tick\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_MMC0)
+		pr_info("%s Resume caused by MMC0\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_MMC1)
+		pr_info("%s Resume caused by MMC1\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_MMC2)
+		pr_info("%s Resume caused by MMC2\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_I2S)
+		pr_info("%s Resume caused by I2S\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_TIMER)
+		pr_info("%s Resume caused by TIMER\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_WIFI_ACTIVE)
+		pr_info("%s Resume caused by WIFI_ACTIVE\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_CP_RESET_REQ)
+		pr_info("%s Resume caused by CP_RESET_REQ\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_GNSS_WAKEUP_REQ)
+		pr_info("%s Resume caused by GNSS_WAKEUP_REQ\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_GNSS_RESET_REQ)
+		pr_info("%s Resume caused by GNSS_RESET_REQ\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_GNSS_ACTIVE)
+		pr_info("%s Resume caused by GNSS active\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_INT_MBOX_CP)
+		pr_info("%s Resume caused by INT_MBOX_CP\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_CP_ACTIVE)
+		pr_info("%s Resume caused by CP active\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_INT_MBOX_GNSS)
+		pr_info("%s Resume caused by INT_MBOX_GNSS\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_INT_MBOX_WIFI)
+		pr_info("%s Resume caused by INT_MBOX_WIFI\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_CORTEXM0_APM)
+		pr_info("%s Resume caused by CORTEXM0_APM\n", EXYNOS_PM_PREFIX);
+	else if (wakeup_stat & WAKEUP_STAT_WIFI_RESET_REQ)
+		pr_info("%s Resume caused by WIFI_RESET_REQ\n", EXYNOS_PM_PREFIX);
 	else
 		pr_info("%s Resume caused by wakeup_stat 0x%08x\n",
 			EXYNOS_PM_PREFIX, wakeup_stat);
@@ -244,11 +298,33 @@ EXPORT_SYMBOL_GPL(exynos_pm_sicd_exit);
 
 static int exynos_pm_syscore_suspend(void)
 {
+#ifdef CONFIG_SEC_DEBUG
+	unsigned int val;
+	unsigned int addr;
+	int debug_level;
+#endif
 	if (!exynos_check_cp_status()) {
 		pr_info("%s %s: sleep canceled by CP reset \n",
 					EXYNOS_PM_PREFIX, __func__);
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_SEC_DEBUG
+	debug_level = sec_debug_get_debug_level();
+
+	if (debug_level >= 1) {
+		/* debug level MID or HIGH */
+		addr = 0x0038;
+		exynos_pmu_read(addr, &val);
+		pr_info("CP_STAT (0x%x) = 0x%08x\n", addr, val);
+		addr = 0x0048;
+		exynos_pmu_read(addr, &val);
+		pr_info("GNSS_STAT (0x%x) = 0x%08x\n", addr, val);
+		addr = 0x0148;
+		exynos_pmu_read(addr, &val);
+		pr_info("WIFI_STAT (0x%x) = 0x%08x\n", addr, val);
+	}
+#endif
 
 	pm_info->is_cp_call = is_cp_aud_enabled();
 	if (pm_info->is_cp_call || pm_dbg->test_cp_call) {
@@ -266,6 +342,7 @@ static int exynos_pm_syscore_suspend(void)
 
 static void exynos_pm_syscore_resume(void)
 {
+	pr_info("========== wake up ==========\n");
 	if (pm_info->is_cp_call || pm_dbg->test_cp_call)
 		exynos_wakeup_sys_powerdown(pm_info->cp_call_mode_idx, pm_info->is_early_wakeup);
 	else
@@ -283,6 +360,10 @@ static struct syscore_ops exynos_pm_syscore_ops = {
 	.resume		= exynos_pm_syscore_resume,
 };
 
+#ifdef CONFIG_SEC_GPIO_DVS
+extern void gpio_dvs_check_sleepgpio(void);
+#endif
+
 static int exynos_pm_enter(suspend_state_t state)
 {
 	unsigned int psci_index;
@@ -295,6 +376,15 @@ static int exynos_pm_enter(suspend_state_t state)
 	/* Send an IPI if test_early_wakeup flag is set */
 	if (pm_dbg->test_early_wakeup)
 		arch_send_call_function_single_ipi(0);
+
+#ifdef CONFIG_SEC_GPIO_DVS
+	/************************ Caution !!! ****************************/
+	/* This function must be located in appropriate SLEEP position
+	 * in accordance with the specification of each BB vendor.
+	 */
+	/************************ Caution !!! ****************************/
+	gpio_dvs_check_sleepgpio();
+#endif
 
 	/* This will also act as our return point when
 	 * we resume as it saves its own register state and restores it
@@ -401,6 +491,35 @@ static void __init exynos_pm_debugfs_init(void)
 }
 #endif
 
+#if defined(CONFIG_SEC_FACTORY)
+enum ids_info {
+	table_ver,
+	big_asv,
+	g3d_asv,
+	cpu_ids,
+};
+
+extern int asv_ids_information(enum ids_info id);
+
+static ssize_t show_asv_info(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	int count = 0;
+
+	/* Set asv group info to buf */
+	count += sprintf(&buf[count], "%d ", asv_ids_information(table_ver));
+	count += sprintf(&buf[count], "%03x ", asv_ids_information(big_asv));
+	count += sprintf(&buf[count], "%03x ", asv_ids_information(g3d_asv));
+	count += sprintf(&buf[count], "%u ", asv_ids_information(cpu_ids));
+	count += sprintf(&buf[count], "\n");
+
+	return count;
+}
+
+static DEVICE_ATTR(asv_info, 0664, show_asv_info, NULL);
+#endif /* CONFIG_SEC_FACTORY */
+
 static __init int exynos_pm_drvinit(void)
 {
 	int ret;
@@ -500,6 +619,14 @@ static __init int exynos_pm_drvinit(void)
 #ifdef CONFIG_DEBUG_FS
 	exynos_pm_debugfs_init();
 #endif
+
+#if defined(CONFIG_SEC_FACTORY)
+	/* create sysfs group */
+	ret = sysfs_create_file(power_kobj, &dev_attr_asv_info.attr);
+	if (ret) {
+		pr_err("%s: failed to create exynos7570 asv attribute file\n", __func__);
+	}
+#endif /* CONFIG_SEC_FACTORY */
 
 	return 0;
 }

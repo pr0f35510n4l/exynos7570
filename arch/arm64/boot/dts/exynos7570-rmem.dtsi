@@ -9,6 +9,8 @@
  * published by the Free Software Foundation.
 */
 
+/memreserve/ 0x7E800000 0x100000;
+
 / {
 	reserved-memory {
 		#address-cells = <2>;
@@ -17,13 +19,13 @@
 
 		camera {
 			compatible = "exynos8890-ion,camera";
-			reg = <0x0 0x720EF000 0x1000>;
+			reg = <0x0 0x710EF000 0x1000>;
 			id = <10>;
 		};
 
 		video_nfw {
 			compatible = "exynos7570-mfc,vnfw";
-			reg = <0x0 0x720F0000 0x110000>;
+			reg = <0x0 0x710F0000 0x110000>;
 			fixed_upper_base = <0xffffff80>;
 			fixed_lower_base = <0x40000000>;
 		};
@@ -34,6 +36,11 @@
 			reg = <0x0 0x72200000 0x1200000>;
 			id = <3>;
 			compat-id = <25 31>;
+		};
+
+		modem_if {
+			compatible = "exynos,modem_if";
+			reg = <0 0x73400000 0x5C00000>;
 		};
 
 		wifibt_if {
@@ -52,6 +59,7 @@
 			compatible = "exynos8890-ion,vframe";
 			secure;
 			reusable;
+			ion,bulk_reclaim;
 			reg = <0x0 0x79C00000 0x3800000>;
 			id = <5>;
 			compat-id = <26 29>;
@@ -61,7 +69,7 @@
 			compatible = "exynos8890-ion,vscaler";
 			secure;
 			reusable;
-			reg = <0x0 0x7D400000 0xC00000>;
+			reg = <0x0 0x71200000 0x1000000>;
 			id = <6>;
 			compat-id = <28>;
 		};
@@ -71,5 +79,10 @@
 			reg = <0 0x7E100000 0x200000>;
 		};
 
+	};
+
+	ect {
+		parameter_address = <0x7E0FA000>;
+		parameter_size = <0x6000>;
 	};
 };

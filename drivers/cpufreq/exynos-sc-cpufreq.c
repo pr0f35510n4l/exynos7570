@@ -39,6 +39,14 @@
 #include <soc/samsung/tmu.h>
 #include <soc/samsung/ect_parser.h>
 
+#ifdef CONFIG_SEC_EXT
+#include <linux/sec_ext.h>
+#endif
+
+#ifdef CONFIG_SW_SELF_DISCHARGING
+#include <linux/cpuidle.h>
+#endif
+
 #define FREQ_OSCCLK                     26000
 
 static struct exynos_dvfs_info *exynos_info;
@@ -66,6 +74,10 @@ static int qos_min_default_value = PM_QOS_CLUSTER0_FREQ_MIN_DEFAULT_VALUE;
 
 static DEFINE_MUTEX(cpufreq_lock);
 
+#ifdef CONFIG_SW_SELF_DISCHARGING
+static int self_discharging;
+#endif
+
 static unsigned int clk_get_freq(void)
 {
         if (exynos_info->get_freq)
@@ -75,6 +87,27 @@ static unsigned int clk_get_freq(void)
 
         return 0;
 }
+
+#ifdef CONFIG_SEC_BOOTSTAT
+void sec_bootstat_get_cpuinfo(int *freq, int *online)
+{
+	int cpu;
+	struct cpufreq_policy *policy;
+
+	get_online_cpus();
+	*online = cpumask_bits(cpu_online_mask)[0];
+	for_each_online_cpu(cpu) {
+		if (freq[0] == 0) {
+			policy = cpufreq_cpu_get(cpu);
+			if (!policy)
+				continue;
+			freq[0] = policy->cur;
+			cpufreq_cpu_put(policy);
+		}
+	}
+	put_online_cpus();
+}
+#endif
 
 static void set_boot_freq(void)
 {
@@ -767,8 +800,12 @@ inline ssize_t store_core_freq(const char *buf, size_t count,
         if (input > 0) {
                 if (qos_flag)
                         input = max(input, (int)*freq_info);
-                else
+                else {
                         input = min(input, (int)*freq_info);
+#ifdef CONFIG_SW_SELF_DISCHARGING
+			input = max(input, self_discharging);
+#endif
+		}
         }
 
         if (pm_qos_request_active(core_qos_real))
@@ -864,6 +901,38 @@ static struct global_attr cpufreq_min_limit =
 static struct global_attr cpufreq_max_limit =
                 __ATTR(cpufreq_max_limit, S_IRUGO | S_IWUSR,
                         show_cpufreq_max_limit, store_cpufreq_max_limit);
+#endif
+
+#ifdef CONFIG_SW_SELF_DISCHARGING
+static ssize_t show_cpufreq_self_discharging(struct kobject *kobj,
+			     struct attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", self_discharging);
+}
+
+static ssize_t store_cpufreq_self_discharging(struct kobject *kobj, struct attribute *attr,
+			      const char *buf, size_t count)
+{
+	int input;
+
+	if (!sscanf(buf, "%d", &input))
+		return -EINVAL;
+
+	if (input > 0) {
+		self_discharging = input;
+		cpu_idle_poll_ctrl(true);
+	}
+	else {
+		self_discharging = 0;
+		cpu_idle_poll_ctrl(false);
+	}
+
+        return store_core_freq(buf, count, false);
+}
+
+static struct global_attr cpufreq_self_discharging =
+		__ATTR(cpufreq_self_discharging, S_IRUGO | S_IWUSR,
+			show_cpufreq_self_discharging, store_cpufreq_self_discharging);
 #endif
 
 static unsigned int exynos_get_safe_volt(unsigned int old_index,
@@ -1390,9 +1459,22 @@ static int exynos_sc_cpufreq_driver_init(struct device *dev)
                 goto err_cpufreq_max_limit;
         }
 #endif
+#ifdef CONFIG_SW_SELF_DISCHARGING
+	self_discharging = 0;
+	ret = sysfs_create_file(power_kobj, &cpufreq_self_discharging.attr);
+	if (ret) {
+		pr_err("%s: failed to create cpufreq_self_discharging sysfs interface\n", __func__);
+		goto err_cpufreq_self_discharging;
+	}
+#endif
 
 	pr_info("%s: Single cluster CPUFreq Initialization Complete\n", __func__);
 	return 0;
+
+#ifdef CONFIG_SW_SELF_DISCHARGING
+err_cpufreq_self_discharging:
+	sysfs_remove_file(power_kobj, &cpufreq_max_limit.attr);
+#endif
 #ifdef CONFIG_PM
 err_cpufreq_max_limit:
         sysfs_remove_file(power_kobj, &cpufreq_min_limit.attr);

@@ -60,10 +60,12 @@ obj-$(CONFIG_CONNECTOR)		+= connector/
 obj-$(CONFIG_FB_I810)           += video/fbdev/i810/
 obj-$(CONFIG_FB_INTEL)          += video/fbdev/intelfb/
 
+obj-$(CONFIG_VBUS_NOTIFIER)	+= staging/samsung/sec_notifier/
 obj-$(CONFIG_USE_MUIC)      += muic/
 
 obj-$(CONFIG_PARPORT)		+= parport/
-obj-y				+= base/ block/ misc/ mfd/ nfc/
+obj-y				+= base/ block/ misc/ mfd/
+obj-$(CONFIG_SAMSUNG_NFC)		+= nfc/
 obj-$(CONFIG_DMA_SHARED_BUFFER) += dma-buf/
 obj-$(CONFIG_NUBUS)		+= nubus/
 obj-y				+= macintosh/
@@ -142,11 +144,9 @@ obj-$(CONFIG_STAGING)		+= staging/
 obj-y				+= platform/
 #common clk code
 obj-y				+= clk/
-obj-y				+= 3rd_party/
 
 obj-$(CONFIG_MAILBOX)		+= mailbox/
 obj-$(CONFIG_HWSPINLOCK)	+= hwspinlock/
-obj-$(CONFIG_GPS_LSI_S5N6420)	+= gps/
 obj-$(CONFIG_IOMMU_SUPPORT)	+= iommu/
 obj-$(CONFIG_REMOTEPROC)	+= remoteproc/
 obj-$(CONFIG_RPMSG)		+= rpmsg/
@@ -172,3 +172,11 @@ obj-$(CONFIG_EXYNOS_BTS)	+= bts/
 
 # Mobicore driver
 obj-$(CONFIG_TRUSTONIC_TEE)	+= gud/
+
+#Motor
+obj-$(CONFIG_SEC_VIB)		+= motor/
+# Sensor
+obj-$(CONFIG_SENSORS)	+= sensors/
+
+#Fingerprint
+obj-$(CONFIG_SENSORS_FINGERPRINT)       += fingerprint/

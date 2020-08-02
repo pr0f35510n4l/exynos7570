@@ -31,6 +31,9 @@
 
 #include "../governor.h"
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/exynos.h>
+
 static int exynos_devfreq_tmu_notifier(struct notifier_block *nb, unsigned long event, void *v);
 static int exynos_devfreq_set_voltage(u32 *target_volt, struct exynos_devfreq_data *data);
 
@@ -1306,6 +1309,7 @@ static int exynos_devfreq_target(struct device *dev, unsigned long *target_freq,
 	volt_order = exynos_devfreq_set_volt_order(data);
 
 	exynos_ss_freq(data->ess_flag, data->old_freq, data->new_freq, ESS_FLAG_IN);
+	trace_exynos_freq_in(data->ess_flag, data->old_freq);
 
 	if (data->use_cl_dvfs && !data->volt_offset) {
 		if (data->ops.cl_dvfs_stop) {
@@ -1501,6 +1505,7 @@ static int exynos_devfreq_target(struct device *dev, unsigned long *target_freq,
 	}
 
 	exynos_ss_freq(data->ess_flag, data->old_freq, data->new_freq, ESS_FLAG_OUT);
+	trace_exynos_freq_out(data->ess_flag, data->new_freq);
 
 	data->old_freq = data->new_freq;
 	data->old_idx = data->new_idx;

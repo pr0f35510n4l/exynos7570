@@ -44,6 +44,7 @@
 #endif
 #include <linux/memblock.h>
 #include <asm/map.h>
+#include <trace/events/exynos.h>
 
 #define CLUSTER_MIN_MASK			0x0000FFFF
 #define CLUSTER_MIN_SHIFT			0
@@ -214,7 +215,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 	minfo->total_size = 0;
 	/* setfile */
 	minfo->pb_setfile = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, SETFILE_SIZE, 16);
-	if (IS_ERR(minfo->pb_setfile)) {
+	if (IS_ERR_OR_NULL(minfo->pb_setfile)) {
 		err("failed to allocate buffer for SETFILE");
 		return -ENOMEM;
 	}
@@ -222,7 +223,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 	/* calibration data for rear lens */
 	minfo->pb_rear_cal = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, REAR_CALDATA_SIZE, 16);
-	if (IS_ERR(minfo->pb_rear_cal)) {
+	if (IS_ERR_OR_NULL(minfo->pb_rear_cal)) {
 		err("failed to allocate buffer for REAR_CALDATA");
 		return -ENOMEM;
 	}
@@ -230,7 +231,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 	/* calibration data for front lens */
 	minfo->pb_front_cal = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, FRONT_CALDATA_SIZE, 16);
-	if (IS_ERR(minfo->pb_front_cal)) {
+	if (IS_ERR_OR_NULL(minfo->pb_front_cal)) {
 		err("failed to allocate buffer for FRONT_CALDATA");
 		return -ENOMEM;
 	}
@@ -238,10 +239,10 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 	/* library logging */
 	minfo->pb_debug = mem->kmalloc(DEBUG_REGION_SIZE + 0x10, 16);
-	if (IS_ERR(minfo->pb_debug)) {
+	if (IS_ERR_OR_NULL(minfo->pb_debug)) {
 		/* retry by ION */
 		minfo->pb_debug = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, DEBUG_REGION_SIZE + 0x10, 16);
-		if (IS_ERR(minfo->pb_debug)) {
+		if (IS_ERR_OR_NULL(minfo->pb_debug)) {
 			err("failed to allocate buffer for DEBUG_REGION");
 			return -ENOMEM;
 		}
@@ -250,7 +251,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 	/* data region */
 	minfo->pb_dregion = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, DATA_REGION_SIZE, 16);
-	if (IS_ERR(minfo->pb_dregion)) {
+	if (IS_ERR_OR_NULL(minfo->pb_dregion)) {
 		err("failed to allocate buffer for DATA_REGION");
 		return -ENOMEM;
 	}
@@ -259,7 +260,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 	/* parameter region */
 	minfo->pb_pregion = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx,
 						(FIMC_IS_SENSOR_COUNT*PARAM_REGION_SIZE), 16);
-	if (IS_ERR(minfo->pb_pregion)) {
+	if (IS_ERR_OR_NULL(minfo->pb_pregion)) {
 		err("failed to allocate buffer for PARAM_REGION");
 		return -ENOMEM;
 	}
@@ -267,7 +268,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 	/* fshared data region */
 	minfo->pb_fshared = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, FSHARED_REGION_SIZE, 16);
-	if (IS_ERR(minfo->pb_fshared)) {
+	if (IS_ERR_OR_NULL(minfo->pb_fshared)) {
 		err("failed to allocate buffer for FSHARED_REGION");
 		return -ENOMEM;
 	}
@@ -275,7 +276,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 	/* reserved memory for library */
 	minfo->pb_lib = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, RESERVE_LIB_SIZE, 16);
-	if (IS_ERR(minfo->pb_lib)) {
+	if (IS_ERR_OR_NULL(minfo->pb_lib)) {
 		err("failed to allocate buffer for library");
 		return -ENOMEM;
 	}
@@ -283,7 +284,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 	/* 3aa/isp internal DMA buffer */
 	minfo->pb_taaisp = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, TAAISP_DMA_SIZE, 16);
-	if (IS_ERR(minfo->pb_taaisp)) {
+	if (IS_ERR_OR_NULL(minfo->pb_taaisp)) {
 		err("failed to allocate buffer for TAAISP_DMAE");
 		return -ENOMEM;
 	}
@@ -291,7 +292,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 #if defined (ENABLE_FD_SW)
 	minfo->pb_lhfd = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, LHFD_MAP_SIZE, 16);
-	if (IS_ERR(minfo->pb_lhfd)) {
+	if (IS_ERR_OR_NULL(minfo->pb_lhfd)) {
 		err("failed to allocate buffer for LHFD_MAP");
 		return -ENOMEM;
 	}
@@ -300,7 +301,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 
 #if defined (ENABLE_VRA)
 	minfo->pb_vra = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, VRA_DMA_SIZE, 16);
-	if (IS_ERR(minfo->pb_vra)) {
+	if (IS_ERR_OR_NULL(minfo->pb_vra)) {
 		err("failed to allocate buffer for VRA");
 		return -ENOMEM;
 	}
@@ -318,7 +319,7 @@ static int fimc_is_resourcemgr_allocmem(struct fimc_is_resourcemgr *resourcemgr)
 #endif
 	if (tpu_size > 0) {
 		minfo->pb_tpu = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, tpu_size, 16);
-		if (IS_ERR(minfo->pb_tpu)) {
+		if (IS_ERR_OR_NULL(minfo->pb_tpu)) {
 			err("failed to allocate buffer for TPU");
 			return -ENOMEM;
 		}
@@ -508,6 +509,7 @@ static int fimc_is_tmu_notifier(struct notifier_block *nb,
 
 #ifdef CONFIG_EXYNOS_SNAPSHOT_THERMAL
 	exynos_ss_thermal(NULL, 0, cooling_device_name, resourcemgr->limited_fps);
+	trace_exynos_thermal(NULL, 0, cooling_device_name, resourcemgr->limited_fps);
 #endif
 	return ret;
 #else
@@ -865,7 +867,6 @@ int fimc_is_resource_get(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type)
 		}
 #endif
 
-#if !defined(ENABLE_SOC_CAMERA)
 #if !defined(ENABLE_IS_CORE) && !defined(DISABLE_LIB)
 		ret = fimc_is_load_bin();
 		if (ret < 0) {
@@ -874,7 +875,6 @@ int fimc_is_resource_get(struct fimc_is_resourcemgr *resourcemgr, u32 rsc_type)
 		}
 
 		info("fimc_is_load_bin done\n");
-#endif
 #endif
 	}
 

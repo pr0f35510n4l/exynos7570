@@ -83,8 +83,7 @@ static void mc_timer_work_func(struct kthread_work *work)
 }
 
 int secos_booster_request_pm_qos(struct pm_qos_request *req, s32 freq)
-{
-	int ret;
+{	
 	static ktime_t recent_qos_req_time;
 	ktime_t current_time;
 	unsigned long long ns;
@@ -96,13 +95,7 @@ int secos_booster_request_pm_qos(struct pm_qos_request *req, s32 freq)
 	if (ns > 0 && WAIT_TIME > ns) {
 		pr_info("%s: recalling time is too short. wait %lldms\n", __func__, (WAIT_TIME - ns) / NS_DIV_MS + 1);
 		msleep((WAIT_TIME - ns) / NS_DIV_MS + 1);
-	}
-
-	if (freq != 0 && is_suspend_prepared) {
-		pr_err("%s: PM_SUSPEND_PREPARE state\n", __func__);
-		ret = -EINVAL;
-		return ret;
-	}
+	}	
 
 	pm_qos_update_request(req, freq);
 
@@ -322,7 +315,7 @@ static int __init secos_booster_init(void)
 
 	max_cpu_freq = cpufreq_quick_get_max(MIGRATE_TARGET_CORE);
 
-	pm_qos_add_request(&secos_booster_cluster1_qos, PM_QOS_CLUSTER1_FREQ_MIN, 0);
+	pm_qos_add_request(&secos_booster_cluster1_qos, PM_QOS_CLUSTER0_FREQ_MIN, 0);
 
 	register_pm_notifier(&secos_booster_pm_notifier_block);
 

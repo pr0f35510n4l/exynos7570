@@ -13,6 +13,7 @@
 #include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/smc.h>
+#include <trace/events/exynos.h>
 
 #define CONFIG_EXYNOS_SMC_LOGGING
 
@@ -36,6 +37,7 @@ static unsigned int drm_smc_log_idx;
 
 int exynos_smc(unsigned long cmd, unsigned long arg1, unsigned long arg2, unsigned long arg3)
 {
+	int smc_ret;
 #ifdef CONFIG_EXYNOS_SMC_LOGGING
 	unsigned long flags;
 #endif
@@ -57,5 +59,9 @@ int exynos_smc(unsigned long cmd, unsigned long arg1, unsigned long arg2, unsign
 	}
 #endif
 
-	return __exynos_smc(cmd, arg1, arg2, arg3);
+	trace_exynos_smc_in(cmd, arg1, arg2, arg3);
+	smc_ret = __exynos_smc(cmd, arg1, arg2, arg3);
+	trace_exynos_smc_out(cmd, arg1, arg2, arg3);
+
+	return smc_ret;
 }

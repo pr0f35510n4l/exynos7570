@@ -938,7 +938,6 @@ int fimc_is_hw_query_cap(void *cap_data, int hw_id)
 			cap->out_otf[0] = MCSC_CAP_SUPPORT;
 			cap->out_otf[1] = MCSC_CAP_SUPPORT;
 			cap->out_otf[2] = MCSC_CAP_SUPPORT;
-			cap->enable_shared_output = true;
 		}
 		break;
 	default:

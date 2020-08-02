@@ -51,7 +51,7 @@ static const u32 *sensor_2l1_global;
 static u32 sensor_2l1_global_size;
 static const u32 **sensor_2l1_setfiles;
 static const u32 *sensor_2l1_setfile_sizes;
-static const struct sensor_pll_info **sensor_2l1_pllinfos;
+static const struct sensor_pll_info_compact **sensor_2l1_pllinfos;
 static u32 sensor_2l1_max_setfile_num;
 #ifdef CONFIG_SENSOR_RETENTION_USE
 static const u32 **sensor_2l1_retention;
@@ -95,51 +95,37 @@ static void sensor_2l1_set_integration_max_margin(u32 mode, cis_shared_data *cis
 	}
 }
 
-static void sensor_2l1_cis_data_calculation(const struct sensor_pll_info *pll_info, cis_shared_data *cis_data)
+static void sensor_2l1_cis_data_calculation(const struct sensor_pll_info_compact *pll_info_compact, cis_shared_data *cis_data)
 {
-	u32 pll_voc_a = 0, vt_pix_clk_hz = 0;
-	u32 frame_rate = 0, max_fps = 0, frame_valid_us = 0, const_value = 2;
+	u32 vt_pix_clk_hz = 0;
+	u32 frame_rate = 0, max_fps = 0, frame_valid_us = 0;
 
-	BUG_ON(!pll_info);
+	BUG_ON(!pll_info_compact);
 
-	/* 1. mipi data rate calculation (Mbps/Lane) */
-	/* ToDo: using output Pixel Clock Divider Value */
-	/* pll_voc_b = pll_info->ext_clk / pll_info->secnd_pre_pll_clk_div * pll_info->secnd_pll_multiplier * 2;
-	op_sys_clk_hz = pll_voc_b / pll_info->op_sys_clk_div;
-	if(gpsSensorExInfo) {
-		gpsSensorExInfo->uiMIPISpeedBps = op_sys_clk_hz;
-		gpsSensorExInfo->uiMCLK = sensorInfo.ext_clk;
-	} */
+	/* 1. get pclk value from pll info */
+	vt_pix_clk_hz = pll_info_compact->pclk;
 
-	/* 2. pixel rate calculation (Mpps) */
-	pll_voc_a = pll_info->ext_clk / pll_info->pre_pll_clk_div * pll_info->pll_multiplier;
-	vt_pix_clk_hz = (pll_voc_a /(pll_info->vt_sys_clk_div * pll_info->vt_pix_clk_div)) * const_value;
+	dbg_sensor("ext_clock(%d), mipi_datarate(%d), pclk(%d)\n",
+			pll_info_compact->ext_clk, pll_info_compact->mipi_datarate, pll_info_compact->pclk);
 
-	dbg_sensor("ext_clock(%d) / pre_pll_clk_div(%d) * pll_multiplier(%d) = pll_voc_a(%d)\n",
-						pll_info->ext_clk, pll_info->pre_pll_clk_div,
-						pll_info->pll_multiplier, pll_voc_a);
-	dbg_sensor("pll_voc_a(%d) / (vt_sys_clk_div(%d) * vt_pix_clk_div(%d)) = pixel clock (%d hz)\n",
-						pll_voc_a, pll_info->vt_sys_clk_div,
-						pll_info->vt_pix_clk_div, vt_pix_clk_hz);
-
-	/* 3. the time of processing one frame calculation (us) */
-	cis_data->min_frame_us_time = (pll_info->frame_length_lines * pll_info->line_length_pck
+	/* 2. the time of processing one frame calculation (us) */
+	cis_data->min_frame_us_time = (pll_info_compact->frame_length_lines * pll_info_compact->line_length_pck
 					/ (vt_pix_clk_hz / (1000 * 1000)));
 	cis_data->cur_frame_us_time = cis_data->min_frame_us_time;
 
-	/* 4. FPS calculation */
-	frame_rate = vt_pix_clk_hz / (pll_info->frame_length_lines * pll_info->line_length_pck);
-	dbg_sensor("frame_rate (%d) = vt_pix_clk_hz(%d) / (pll_info->frame_length_lines(%d) * pll_info->line_length_pck(%d))\n",
-		frame_rate, vt_pix_clk_hz, pll_info->frame_length_lines, pll_info->line_length_pck);
+	/* 3. FPS calculation */
+	frame_rate = vt_pix_clk_hz / (pll_info_compact->frame_length_lines * pll_info_compact->line_length_pck);
+	dbg_sensor("frame_rate (%d) = vt_pix_clk_hz(%d) / (pll_info_compact->frame_length_lines(%d) * pll_info_compact->line_length_pck(%d))\n",
+		frame_rate, vt_pix_clk_hz, pll_info_compact->frame_length_lines, pll_info_compact->line_length_pck);
 
 	/* calculate max fps */
-	max_fps = (vt_pix_clk_hz * 10) / (pll_info->frame_length_lines * pll_info->line_length_pck);
+	max_fps = (vt_pix_clk_hz * 10) / (pll_info_compact->frame_length_lines * pll_info_compact->line_length_pck);
 	max_fps = (max_fps % 10 >= 5 ? frame_rate + 1 : frame_rate);
 
 	cis_data->pclk = vt_pix_clk_hz;
 	cis_data->max_fps = max_fps;
-	cis_data->frame_length_lines = pll_info->frame_length_lines;
-	cis_data->line_length_pck = pll_info->line_length_pck;
+	cis_data->frame_length_lines = pll_info_compact->frame_length_lines;
+	cis_data->line_length_pck = pll_info_compact->line_length_pck;
 	cis_data->line_readOut_time = sensor_cis_do_div64((u64)cis_data->line_length_pck * (u64)(1000 * 1000 * 1000), cis_data->pclk);
 	cis_data->rolling_shutter_skew = (cis_data->cur_height - 1) * cis_data->line_readOut_time;
 	cis_data->stream_on = false;
@@ -157,7 +143,6 @@ static void sensor_2l1_cis_data_calculation(const struct sensor_pll_info *pll_in
 	dbg_sensor("Fps: %d, max fps(%d)\n", frame_rate, cis_data->max_fps);
 	dbg_sensor("min_frame_time(%d us)\n", cis_data->min_frame_us_time);
 	dbg_sensor("Pixel rate(Mbps): %d\n", cis_data->pclk / 1000000);
-	/* dbg_sensor("Mbps/lane : %d Mbps\n", pll_voc_b / pll_info->op_sys_clk_div / 1000 / 1000); */
 
 	/* Frame period calculation */
 	cis_data->frame_time = (cis_data->line_readOut_time * cis_data->cur_height / 1000);
@@ -169,6 +154,35 @@ static void sensor_2l1_cis_data_calculation(const struct sensor_pll_info *pll_in
 	cis_data->min_fine_integration_time = SENSOR_2L1_FINE_INTEGRATION_TIME_MIN;
 	cis_data->max_fine_integration_time = SENSOR_2L1_FINE_INTEGRATION_TIME_MAX;
 	cis_data->min_coarse_integration_time = SENSOR_2L1_COARSE_INTEGRATION_TIME_MIN;
+}
+
+void sensor_2l1_cis_data_calc(struct v4l2_subdev *subdev, u32 mode)
+{
+	int ret = 0;
+	struct fimc_is_cis *cis = NULL;
+
+	BUG_ON(!subdev);
+
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
+	BUG_ON(!cis);
+	BUG_ON(!cis->cis_data);
+
+	if (mode > sensor_2l1_max_setfile_num) {
+		err("invalid mode(%d)!!", mode);
+		return;
+	}
+
+	/* If check_rev fail when cis_init, one more check_rev in mode_change */
+	if (cis->rev_flag == true) {
+		cis->rev_flag = false;
+		ret = sensor_cis_check_rev(cis);
+		if (ret < 0) {
+			err("sensor_2l1_check_rev is fail: ret(%d)", ret);
+			return;
+		}
+	}
+
+	sensor_2l1_cis_data_calculation(sensor_2l1_pllinfos[mode], cis->cis_data);
 }
 
 static int sensor_2l1_wait_stream_off_status(cis_shared_data *cis_data)
@@ -474,7 +488,9 @@ int sensor_2l1_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 		}
 	}
 
+#if 0 /* cis_data_calculation is called in module_s_format */
 	sensor_2l1_cis_data_calculation(sensor_2l1_pllinfos[mode], cis->cis_data);
+#endif
 	sensor_2l1_set_integration_max_margin(mode, cis->cis_data);
 
 #if defined(CONFIG_SENSOR_RETENTION_USE)
@@ -611,9 +627,16 @@ int sensor_2l1_cis_retention_crc_check(struct v4l2_subdev *subdev)
 		}
 
 		info("[%s] rewrite retention modes to SRAM\n", __func__);
+
+		ret = sensor_2l1_cis_set_global_setting(subdev);
+		if (ret < 0) {
+			err("CRC error recover: rewrite sensor global setting failed");
+			goto p_err;
+		}
+
 		ret = sensor_2l1_cis_retention_prepare(subdev);
 		if (ret < 0) {
-			err("sensor sram rewrite fail to CRC fail!!");
+			err("CRC error recover: rewrite sensor mode setting failed");
 			goto p_err;
 		}
 	}
@@ -1879,6 +1902,7 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_get_max_digital_gain = sensor_2l1_cis_get_max_digital_gain,
 	.cis_compensate_gain_for_extremely_br = sensor_cis_compensate_gain_for_extremely_br,
 	.cis_wait_streamoff = sensor_cis_wait_streamoff,
+	.cis_data_calculation = sensor_2l1_cis_data_calc,
 #ifdef CONFIG_SENSOR_RETENTION_USE
 	.cis_retention_prepare = sensor_2l1_cis_retention_prepare,
 	.cis_retention_crc_check = sensor_2l1_cis_retention_crc_check,
@@ -2048,6 +2072,7 @@ MODULE_DEVICE_TABLE(of, exynos_fimc_is_cis_2l1_match);
 
 static const struct i2c_device_id cis_2l1_idt[] = {
 	{ SENSOR_NAME, 0 },
+	{},
 };
 
 static struct i2c_driver cis_2l1_driver = {

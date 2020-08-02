@@ -134,6 +134,85 @@ p_err:
 	return ret;
 }
 
+int sensor_cis_set_registers_addr8(struct v4l2_subdev *subdev, const u32 *regs, const u32 size)
+{
+	int ret = 0;
+	int i = 0;
+	struct fimc_is_cis *cis;
+	struct i2c_client *client;
+	int index_str = 0, index_next = 0;
+	int burst_num = 1;
+	u16 *addr_str = NULL;
+
+	BUG_ON(!subdev);
+	BUG_ON(!regs);
+
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
+	if (!cis) {
+		err("cis is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	client = cis->client;
+	if (unlikely(!client)) {
+		err("client is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	msleep(3);
+
+	for (i = 0; i < size; i += I2C_NEXT) {
+		switch (regs[i + I2C_ADDR]) {
+		case I2C_MODE_BURST_ADDR:
+			index_str = i;
+			break;
+		case I2C_MODE_BURST_DATA:
+			index_next = i + I2C_NEXT;
+			if ((index_next < size) && (I2C_MODE_BURST_DATA == regs[index_next + I2C_ADDR])) {
+				burst_num++;
+				break;
+			}
+
+			addr_str = (u16 *)&regs[index_str + I2C_NEXT + I2C_DATA];
+			ret = fimc_is_sensor_write16_burst(client, regs[index_str + I2C_DATA], addr_str, burst_num);
+			if (ret < 0) {
+				err("fimc_is_sensor_write16_burst fail, ret(%d), addr(%#x), data(%#x)",
+						ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+			}
+			burst_num = 1;
+			break;
+		case I2C_MODE_DELAY:
+			usleep_range(regs[i + I2C_DATA], regs[i + I2C_DATA]);
+			break;
+		default:
+			if (regs[i + I2C_BYTE] == 0x1) {
+				ret = fimc_is_sensor_addr8_write8(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				if (ret < 0) {
+					err("fimc_is_sensor_write8 fail, ret(%d), addr(%#x), data(%#x)",
+							ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				}
+			} else if (regs[i + I2C_BYTE] == 0x2) {
+				ret = fimc_is_sensor_write16(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				if (ret < 0) {
+					err("fimc_is_sensor_write16 fail, ret(%d), addr(%#x), data(%#x)",
+						ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				}
+			}
+		}
+	}
+
+#if (CIS_TEST_PATTERN_MODE != 0)
+	ret = fimc_is_sensor_write8(client, 0x0601, CIS_TEST_PATTERN_MODE);
+#endif
+
+	dbg_sensor("[%s] sensor setting done\n", __func__);
+
+p_err:
+	return ret;
+}
+
 int sensor_cis_check_rev(struct fimc_is_cis *cis)
 {
 	int ret = 0;

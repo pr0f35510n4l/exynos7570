@@ -2275,8 +2275,8 @@ static int _wm8994_set_fll(struct snd_soc_codec *codec, int id, int src,
 
 		reg = WM8994_FLL1_ENA;
 
-		//if (fll.k)
-		//	reg |= WM8994_FLL1_FRAC;
+		if (fll.k)
+			reg |= WM8994_FLL1_FRAC;
 		if (src == WM8994_FLL_SRC_INTERNAL)
 			reg |= WM8994_FLL1_OSC_ENA;
 
@@ -3576,7 +3576,6 @@ static void wm8958_mic_id(void *data, u16 status)
 	struct snd_soc_codec *codec = data;
 	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 
-
 	/* Either nothing present or just starting detection */
 	if (!(status & WM8958_MICD_STS)) {
 		/* If nothing present then clear our statuses */
@@ -3783,10 +3782,7 @@ int wm8958_mic_detect(struct snd_soc_codec *codec, struct snd_soc_jack *jack,
 	}
 
 	if (jack) {
-		pr_err("%s: jack is true\n", __func__);
-		//snd_soc_dapm_force_enable_pin(&codec->dapm, "CLK_SYS");//enable CLK MICBIAS ?
-		//snd_soc_dapm_sync(&codec->dapm);
-		snd_soc_dapm_force_enable_pin(&codec->dapm, "MICBIAS2");
+		snd_soc_dapm_force_enable_pin(&codec->dapm, "CLK_SYS");
 		snd_soc_dapm_sync(&codec->dapm);
 
 		wm8994->micdet[0].jack = jack;
@@ -3807,7 +3803,7 @@ int wm8958_mic_detect(struct snd_soc_codec *codec, struct snd_soc_jack *jack,
 			wm8994->mic_id_cb_data = codec;
 		}
 
-		wm8958_micd_set_rate(codec);//update WM8958_MIC_DETECT_1
+		wm8958_micd_set_rate(codec);
 
 		/* Detect microphones and short circuits by default */
 		if (control->pdata.micd_lvl_sel)
@@ -4153,7 +4149,6 @@ static int wm8994_codec_probe(struct snd_soc_codec *codec)
 
 	switch (control->type) {
 	case WM1811:
-/*
 		if (control->cust_id > 1 || control->revision > 1) {
 			ret = wm8994_request_irq(wm8994->wm8994,
 						 WM8994_IRQ_GPIO(6),
@@ -4162,7 +4157,6 @@ static int wm8994_codec_probe(struct snd_soc_codec *codec)
 			if (ret == 0)
 				wm8994->jackdet = true;
 		}
-*/
 		break;
 	default:
 		break;
@@ -4259,7 +4253,7 @@ static int wm8994_codec_probe(struct snd_soc_codec *codec)
 
 	wm8994_handle_pdata(wm8994);
 
-	wm_hubs_add_analogue_controls(codec);//wm_hubs.c
+	wm_hubs_add_analogue_controls(codec);
 	snd_soc_add_codec_controls(codec, wm8994_snd_controls,
 			     ARRAY_SIZE(wm8994_snd_controls));
 	snd_soc_dapm_new_controls(dapm, wm8994_dapm_widgets,

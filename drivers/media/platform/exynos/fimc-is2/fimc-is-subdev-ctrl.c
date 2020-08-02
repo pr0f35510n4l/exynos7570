@@ -532,6 +532,11 @@ static int fimc_is_sensor_subdev_stop(void *qdevice,
 	}
 
 	framemgr = GET_SUBDEV_FRAMEMGR(subdev);
+	if (!framemgr) {
+		merr("framemgr is NULL", device);
+		ret = -EINVAL;
+		goto p_err;
+	}
 	framemgr_e_barrier_irqs(framemgr, FMGR_IDX_16, flags);
 
 	frame = peek_frame(framemgr, FS_PROCESS);

@@ -540,6 +540,31 @@ temp_show(struct device *dev, struct device_attribute *attr, char *buf)
 	return sprintf(buf, "%ld\n", temperature);
 }
 
+#ifdef CONFIG_SEC_PM
+static ssize_t
+curr_temp_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct thermal_zone_device *tz;
+	long temperature;
+	int ret;
+	int len = 0;
+	int cnt = 0;
+
+	list_for_each_entry(tz, &thermal_tz_list, node) {
+		if (cnt > 0)
+			len += sprintf(&buf[len], ",");
+		ret = thermal_zone_get_temp(tz, &temperature);
+		if (ret)
+			return ret;
+		len += sprintf(&buf[len], "%ld", temperature / 1000);
+		cnt++;
+	}
+	len += sprintf(&buf[len], "\n");
+
+	return len; 
+}
+#endif
+
 static ssize_t
 mode_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -828,6 +853,9 @@ static DEVICE_ATTR(temp, 0444, temp_show, NULL);
 static DEVICE_ATTR(mode, 0644, mode_show, mode_store);
 static DEVICE_ATTR(passive, S_IRUGO | S_IWUSR, passive_show, passive_store);
 static DEVICE_ATTR(policy, S_IRUGO | S_IWUSR, policy_show, policy_store);
+#ifdef CONFIG_SEC_PM
+static DEVICE_ATTR(curr_temp, 0444, curr_temp_show, NULL);
+#endif
 
 /* sys I/F for cooling device */
 #define to_cooling_device(_dev)	\
@@ -1532,6 +1560,12 @@ struct thermal_zone_device *thermal_zone_device_register(const char *type,
 	result = device_create_file(&tz->device, &dev_attr_temp);
 	if (result)
 		goto unregister;
+
+#ifdef CONFIG_SEC_PM
+	result = device_create_file(&tz->device, &dev_attr_curr_temp);
+	if (result)
+		goto unregister;
+#endif
 
 	if (ops->get_mode) {
 		result = device_create_file(&tz->device, &dev_attr_mode);

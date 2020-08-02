@@ -30,23 +30,21 @@
  * R/W bit should NOT be included.
  */
 
-#define S2MPW01_FG_REG_STATUS           0x00
-#define S2MPW01_FG_REG_IRQ              0x02
-#define S2MPW01_FG_REG_INTM             0x03
-#define S2MPW01_FG_REG_RVBAT            0x04
-#define S2MPW01_FG_REG_ROCV             0x06
-#define S2MPW01_FG_REG_RSOC_SYS         0x08
-#define S2MPW01_FG_REG_RTEMP            0x0A
-#define S2MPW01_FG_REG_RBATCAP          0x0C
-#define S2MPW01_FG_REG_RZADJ            0x0E
-#define S2MPW01_FG_REG_RBATZ0           0x10
-#define S2MPW01_FG_REG_RBATZ1           0x12
-#define S2MPW01_FG_REG_IRQ_LVL          0x14
-#define S2MPW01_FG_REG_CONFIG           0x16
-
-#define S2MPW01_FG_REG_CONFIG_IDLE_STATE        (0x1 << 1)
-#define S2MPW01_FG_REG_CONFIG_INIT_STATE        (0x1 << 2)
-#define S2MPW01_FG_REG_CONFIG_NORMAL_STATE      (0x1 << 3)
+#define S2MPW01_FG_REG_STATUS		0x00
+#define S2MPW01_FG_REG_IRQ			0x02
+#define S2MPW01_FG_REG_INTM		0x03
+#define S2MPW01_FG_REG_RVBAT		0x04
+#define S2MPW01_FG_REG_ROCV			0x06
+#define S2MPW01_FG_REG_RCUR			0x08
+#define S2MPW01_FG_REG_RSOC_SYS		0x0A
+#define S2MPW01_FG_REG_RSOC			0x0C
+#define S2MPW01_FG_REG_RTEMP		0x0E
+#define S2MPW01_FG_REG_RBATCAP		0x10
+#define S2MPW01_FG_REG_RZADJ		0x12
+#define S2MPW01_FG_REG_RBATZ0		0x14
+#define S2MPW01_FG_REG_RBATZ1		0x16
+#define S2MPW01_FG_REG_IRQ_LVL		0x18
+#define S2MPW01_FG_REG_START		0x1A
 
 struct sec_fg_info {
 	/* test print count */
@@ -121,13 +119,5 @@ struct s2mpw01_fuelgauge_data {
 
 	unsigned int pre_soc;
 	int fg_irq;
-	int before_temp_level;
-};
-
-enum {
-	TEMP_LEVEL_VERY_LOW = 0,
-	TEMP_LEVEL_LOW,
-	TEMP_LEVEL_MID,
-	TEMP_LEVEL_HIGH,
 };
 #endif /* __S2MPW01_FUELGAUGE_H */

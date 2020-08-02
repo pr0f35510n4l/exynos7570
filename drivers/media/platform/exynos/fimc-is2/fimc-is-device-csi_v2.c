@@ -177,7 +177,7 @@ static void csis_s_all_vc_dma_buf(struct fimc_is_device_csi *csi)
 	struct fimc_is_frame *frame;
 
 	/* dma setting for several virtual ch 0 ~ 3 */
-	for (vc = CSI_VIRTUAL_CH_0; vc <= CSI_VIRTUAL_CH_MAX; vc++) {
+	for (vc = CSI_VIRTUAL_CH_0; vc < CSI_VIRTUAL_CH_MAX; vc++) {
 		/* ch0 setting */
 		if (vc == CSI_VIRTUAL_CH_0) {
 			framemgr = csi->framemgr;
@@ -221,7 +221,6 @@ static void csis_s_all_vc_dma_buf(struct fimc_is_device_csi *csi)
 				csi_s_buf_addr(csi, frame, 0, vc);
 				csi_s_output_dma(csi, vc, true);
 				trans_frame(framemgr, frame, FS_PROCESS);
-				
 			} else {
 				/*
 				 * (Disable) condition based on N frame
@@ -455,6 +454,10 @@ static void csi_dma_tag(struct v4l2_subdev *subdev,
 	struct fimc_is_frame *frame = NULL;
 	struct fimc_is_frame *frame_done = NULL;
 
+	if (!framemgr) {
+		merr("[CSI][VC%d] tasklet framemgr is null", csi, vc);
+		return;
+	}
 	framemgr_e_barrier(framemgr, 0);
 
 	if (csi_hw_g_output_dma_enable(csi->base_reg, vc)) {
@@ -1086,7 +1089,7 @@ static int csi_stream_on(struct v4l2_subdev *subdev,
 
 	csi_hw_s_irq_msk(base_reg, true);
 
-	if (test_bit(CSIS_DMA_ENABLE, &csi->state)) {	
+	if (test_bit(CSIS_DMA_ENABLE, &csi->state)) {
 		/* runtime buffer done state for error */
 		clear_bit(CSIS_BUF_ERR_VC0, &csi->state);
 		clear_bit(CSIS_BUF_ERR_VC1, &csi->state);
@@ -1313,6 +1316,11 @@ static int csi_s_buffer(struct v4l2_subdev *subdev, void *buf, unsigned int *siz
 		frame = (struct fimc_is_frame *)buf;
 		subdev = frame->subdev;
 		framemgr = GET_SUBDEV_FRAMEMGR(subdev);
+		if (unlikely(framemgr == NULL)) {
+			merr("framemgr is NULL", csi);
+			ret = -EINVAL;
+			goto p_err;
+		}
 
 		vc = CSI_ENTRY_TO_CH(subdev->id);
 	}

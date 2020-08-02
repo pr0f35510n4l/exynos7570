@@ -56,6 +56,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ipi.h>
 
+extern void machine_crash_nonpanic_core(void *unused);
+
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
  * so we need some other way of telling a new secondary core
@@ -560,6 +562,7 @@ static void ipi_cpu_stop(unsigned int cpu, struct pt_regs *regs)
 
 	local_irq_disable();
 
+	machine_crash_nonpanic_core(NULL);
 	exynos_ss_save_context(regs);
 
 	while (1)

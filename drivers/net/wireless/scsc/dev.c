@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -55,9 +55,26 @@ static bool lls_disabled;
 module_param(lls_disabled, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(lls_disabled, "Disable LLS: to disable LLS set 1");
 
+static bool gscan_disabled = true;
+module_param(gscan_disabled, bool, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(gscan_disabled, "Disable gscan: to disable gscan set 1");
+
 static bool epno_disabled = true;
 module_param(epno_disabled, bool, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(epno_disabled, "Disable ePNO: to disable ePNO set 1");
+MODULE_PARM_DESC(epno_disabled, "Disable ePNO: to disable ePNO set 1.\nNote: for ePNO to work gscan should be enabled");
+
+static bool vo_vi_block_ack_disabled;
+module_param(vo_vi_block_ack_disabled, bool, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(vo_vi_block_ack_disabled, "Disable VO VI Block Ack logic added for WMM AC Cert : 5.1.4");
+
+static int max_scan_result_count = 300;
+module_param(max_scan_result_count, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(max_scan_result_count, "Max scan results to be reported");
+
+bool slsi_dev_gscan_supported(void)
+{
+	return !gscan_disabled;
+}
 
 bool slsi_dev_lls_supported(void)
 {
@@ -67,6 +84,16 @@ bool slsi_dev_lls_supported(void)
 bool slsi_dev_epno_supported(void)
 {
 	return !epno_disabled;
+}
+
+bool slsi_dev_vo_vi_block_ack(void)
+{
+	return vo_vi_block_ack_disabled;
+}
+
+int slsi_dev_get_scan_result_count(void)
+{
+	return max_scan_result_count;
 }
 
 static int slsi_dev_inetaddr_changed(struct notifier_block *nb, unsigned long data, void *arg)

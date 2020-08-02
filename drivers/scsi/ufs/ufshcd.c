@@ -4934,6 +4934,9 @@ out:
 		dev_err(hba->dev, "%s failed with err %d, retrying:%d\n",
 			__func__, ret, re_cnt);
 		goto retry;
+	} else if (ret && re_cnt == UFS_LINK_SETUP_RETRIES) {
+		pr_auto(ASL6, "%s %s: %s failed after retries with err %d\n",
+			dev_driver_string(hba->dev), dev_name(hba->dev), __func__, ret);
 	}
 
 	/*

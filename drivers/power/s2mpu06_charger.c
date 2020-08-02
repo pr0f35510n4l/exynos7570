@@ -473,6 +473,15 @@ static bool s2mpu06_chg_init(struct s2mpu06_charger_data *charger)
 				S2MPU06_CHG_REG_CTRL16, 0x00, 0x40))
 		pr_err("%s: error for updating charging Protection bit\n", __func__);
 
+	/* protection for early CV */
+	if (s2mpu06_write_reg(charger->client, 0x50, 0x84))
+		pr_err("%s: error protecting early CV 0x50\n", __func__);
+
+	if (s2mpu06_write_reg(charger->client, 0x3C, 0x0D))
+		pr_err("%s: error protecting early CV 0x3C\n", __func__);
+
+	if (s2mpu06_write_reg(charger->client, 0x4B, 0xFA))
+		pr_err("%s: error protecting early CV 0x3C\n", __func__);
 	return true;
 }
 
@@ -496,10 +505,10 @@ static int s2mpu06_get_charging_status(struct s2mpu06_charger_data *charger)
 
 	if ((chg_sts & 0x20) == 0 && (chg_sts2 & 0x20) == 0)
 		status = POWER_SUPPLY_STATUS_DISCHARGING;
-	else if (chg_sts & 0x20)
-		status = POWER_SUPPLY_STATUS_CHARGING;
 	else if (chg_sts2 & 0x20)
 		status = POWER_SUPPLY_STATUS_FULL;
+	else if (chg_sts & 0x20)
+		status = POWER_SUPPLY_STATUS_CHARGING;
 	else if (!(chg_sts & 0x02))
 		status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 

@@ -503,9 +503,11 @@ static void tasklet_action(struct softirq_action *a)
 					BUG();
 				exynos_ss_irq(ESS_FLAG_SOFTIRQ_TASKLET,
 						t->func, t->state, ESS_FLAG_IN);
+				trace_tasklet_entry(t);
 				t->func(t->data);
 				exynos_ss_irq(ESS_FLAG_SOFTIRQ_TASKLET,
 						t->func, local_softirq_pending(), ESS_FLAG_OUT);
+				trace_tasklet_exit(t);
 				tasklet_unlock(t);
 				continue;
 			}
@@ -543,9 +545,11 @@ static void tasklet_hi_action(struct softirq_action *a)
 					BUG();
 				exynos_ss_irq(ESS_FLAG_SOFTIRQ_HI_TASKLET,
 						t->func, t->state, ESS_FLAG_IN);
+				trace_tasklet_entry(t);
 				t->func(t->data);
 				exynos_ss_irq(ESS_FLAG_SOFTIRQ_HI_TASKLET,
 						t->func, local_softirq_pending(), ESS_FLAG_OUT);
+				trace_tasklet_exit(t);
 				tasklet_unlock(t);
 				continue;
 			}

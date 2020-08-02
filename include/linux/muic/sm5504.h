@@ -38,10 +38,9 @@ enum {
 	SM5504_MUIC_REG_MAN_SW2		= 0x14,
 	SM5504_MUIC_REG_RESET		= 0x1B,
 	SM5504_MUIC_REG_CHG		= 0x24,
+	SM5504_MUIC_REG_SET		= 0x20,
 	SM5504_MUIC_REG_END,
 };
-
-// 여기부터 위아래 참고해서 위에꺼 정리
 
 /* CONTROL : REG_CTRL */
 #define ADC_EN			(1 << 7)
@@ -92,7 +91,8 @@ enum {
 #define POR_M			(1 << 2)
 #define UVLO_M			(1 << 1)
 #define RID_CHARGER_M		(1 << 0)
-#define INTMASK2_INIT		(OVP_OCP_M | POR_M | !UVLO_M | RID_CHARGER_M)
+#define INTMASK2_INIT		(0x80)
+//#define INTMASK2_INIT		(OVP_OCP_M | POR_M | !UVLO_M | RID_CHARGER_M)
 
 /* ADC : REG_ADC */
 #define ADC_MASK		(0x1F)
@@ -147,6 +147,10 @@ enum {
 /* RESET : REG_RESET */
 #define IC_RESET		(1 << 0)
 
+/* Setting Register */
+#define VBUS_300MS		(0x06)
+#define VBUS_140MS		(0x0E)
+
 /* muic chip specific internal data structure
  * that setted at muic-xxxx.c file
  */
@@ -183,6 +187,11 @@ struct sm5504_muic_data {
 
 	struct wake_lock		muic_wake_lock;
 	int rev_id;
+
+	// OTG enable W/A for JAVA Rev03 board
+	u8 otg_en;
+
+	int vbvolt;
 };
 
 extern struct device *switch_device;

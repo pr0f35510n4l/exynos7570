@@ -498,9 +498,10 @@ static inline int wait_mcp_notification(void)
 	}
 
 	/* TEE halted or dead: dump status and SMC log */
-	mark_mcp_dead();
+	//mark_mcp_dead();
 	mcp_dump_mobicore_status();
 
+	panic("tbase halt");
 	return -ETIME;
 }
 

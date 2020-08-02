@@ -11,6 +11,7 @@ extern struct s610_radio *gradio;
 const u16 build_identifier_integer = 483;
 void (*handler_if_count)(struct s610_radio *radio) = NULL;
 void (*handler_audio_pause)(struct s610_radio *radio) = NULL;
+extern u32 *vol_level_init;
 
 /****************************************************************************
 
@@ -37,15 +38,22 @@ void fm_boot(struct s610_radio *radio)
 
 void fm_power_off(void)
 {
+	fm_iclkaux_set(0); /* restore CLKMUX */
+
 	fm_lo_off();
 
 	/* power off for FM digital block */
 	fm_pwroff();
 
-	/* stop 240MHz */
-	fmspeedy_set_reg_field(0xFFF255, 10, (0x0001 << 10), 0);
+	fm_aux_pll_off();
+}
 
-	/*fm_aux_pll_off();*/
+void fm_iclkaux_set(u32 data)
+{
+	fmspeedy_set_reg_field(0xFFF220, 0, (0x0001<<0), data); /* iCLKAux */
+	dev_info(gradio->dev, "%s: iClk Aux: 0x%xh get val: 0x%xh", __func__,
+		data,
+		fmspeedy_get_reg(0xFFF220));
 }
 
 void fm_initialize(struct s610_radio *radio)
@@ -55,8 +63,12 @@ void fm_initialize(struct s610_radio *radio)
 	/* Initialize the analogue block */
 	fm_rx_init();
 
+	fm_iclkaux_set(radio->iclkaux);
+
 	/* Set the demod reg. */
 	fmspeedy_set_reg(0xFFF2A9, radio->low->fm_config.demod_conf_ini);
+	if (radio->vol_3db_att)
+		fmspeedy_set_reg_field(0xFFF2A9, 10, (0x01 << 10), 1);
 	fmspeedy_set_reg(0xFFF2B9, radio->low->fm_config.narrow_thres_ini);
 	fmspeedy_set_reg(0xFFF2C6, radio->low->fm_config.snr_adj_ini);
 	fmspeedy_set_reg(0xFFF2CE, radio->low->fm_config.stereo_thres_ini);
@@ -73,15 +85,24 @@ void fm_initialize(struct s610_radio *radio)
 		radio->low->fm_config.soft_muffle_conf_ini.lpf_en);
 	fmspeedy_set_reg_field(0xFFF2AA, 7, (0x0001 << 7),
 		radio->low->fm_config.soft_muffle_conf_ini.lpf_auto);
+	fmspeedy_set_reg_field(0xFFF2AA, 8, (0x0001 << 8), 1);
 
 	fmspeedy_set_reg(0xFFF2C2, radio->low->fm_config.rssi_adj_ini);
+
+	fmspeedy_set_reg(0xFFF299, 0xFF64);
 
 #ifdef USE_IQ_IMBAL_SMOOTH
 	fmspeedy_set_reg(0xFFF2B6, 0x081C);
 #endif /*USE_IQ_IMBAL_SMOOTH*/
 
 #ifdef USE_SPUR_CANCEL
-	fmspeedy_set_reg(0xFFF2D3, 0x18);
+	if(radio->tc_on)
+		fmspeedy_set_reg(0xFFF2D3, 0x18);
+#endif
+
+#ifdef VOLUME_CTRL_S610
+	/* Enable the volume control */
+	fmspeedy_set_reg_field(0xFFF251, 11, (0x0001 << 11), 1);
 #endif
 
 	fm_set_band(radio, 0); /*FM band(87.5 ~ 108 MHz)*/
@@ -172,6 +193,13 @@ u16 rssi_device_to_host(u16 digi_rssi, u16 agc_gain, u16 rssi_adj)
  Functions for the interaction with a device
 
  ****************************************************************************/
+#ifdef VOLUME_CTRL_S610
+void fm_set_audio_gain(struct s610_radio *radio, u16 gain)
+{
+	fmspeedy_set_reg_field(0xFFF251, 0, (0x07FF << 0),
+		radio->vol_level_mod[gain]);
+}
+#endif
 
 void fm_set_freq(struct s610_radio *radio, u32 freq, bool mix_hi)
 {
@@ -220,7 +248,8 @@ void fm_set_freq(struct s610_radio *radio, u32 freq, bool mix_hi)
 #endif
 
 #ifdef USE_SPUR_CANCEL
-	fm_rx_check_spur(radio);
+	if(radio->tc_on)
+		fm_rx_check_spur(radio);
 #endif
 
 #ifdef USE_IQ_IMBAL_SMOOTH
@@ -232,11 +261,31 @@ void fm_set_freq(struct s610_radio *radio, u32 freq, bool mix_hi)
 	fmspeedy_set_reg_field(0xFFF264, 22, (0x003F << 22),
 			radio->low->fm_tune_info.rx_setup.lna_cdac);
 
+	if (freq == 104000) {
+		fmspeedy_set_reg(0xFFF244, 0x0A20D0);
+		fmspeedy_set_reg_field(0xFFF265, 17, (0x0001<<17), 1); /* AUX_SEL_RX_ADC_CLK_30M  */
+		fmspeedy_set_reg_field(0xFFF241, 9, (0x0001<<9), 0); /* LO_CLKREF_ADC_SEL_CLKREF */
+		fmspeedy_set_reg_field(0xFFF258, 27, (0x0001<<27), 0); /* XTAL_EN_FM_BUF off*/
+	} else {
+		fmspeedy_set_reg(0xFFF244, 0x24A0D0);
+		fmspeedy_set_reg_field(0xFFF265, 17, (0x0001<<17), 0); /* AUX_SEL_RX_ADC_CLK_30M  */
+		fmspeedy_set_reg_field(0xFFF241, 9, (0x0001<<9), 1); /* LO_CLKREF_ADC_SEL_CLKREF */
+		fmspeedy_set_reg_field(0xFFF258, 27, (0x0001<<27), 1); /* XTAL_EN_FM_BUF on */
+	}
+
 	/* Set up LO */
 	fm_lo_set(radio->low->fm_tune_info.lo_setup);
 
 	/* Set up Demod IF */
 	fmspeedy_set_reg(0xFFF2AF, radio->low->fm_tune_info.rx_setup.demod_if);
+
+	if ((freq == 99900) || (freq == 100000) || (freq == 100100)) {
+		fmspeedy_set_reg_field(0xFFF255, 21, (0x0001<<21), 1); /* FMCLK_32M */
+		fmspeedy_set_reg_field(0xFFF2A8, 5, (0x0001 << 5), 1);
+	} else {
+		fmspeedy_set_reg_field(0xFFF255, 21, (0x0001<<21), 0); /* FMCLK_40M */
+		fmspeedy_set_reg_field(0xFFF2A8, 5, (0x0001 << 5), 0);
+	}
 
 	#if 0
 	/* Initialise I/Q imbalance */
@@ -244,6 +293,19 @@ void fm_set_freq(struct s610_radio *radio, u32 freq, bool mix_hi)
 	#endif
 
 	fmspeedy_set_reg(0xFFF2AE, 0x924); /* wide w te */
+ 
+	if (radio->rssi_est_on) {
+		fm_update_rssi(radio);
+		if (radio->low->fm_state.rssi >= 176)
+			fmspeedy_set_reg_field(0xFFF2A9, 4, (0x0001 << 4), 1);
+		else
+			fmspeedy_set_reg_field(0xFFF2A9, 4, (0x0001 << 4), 0);
+	}
+
+	if (radio->sw_mute_weak) {
+		radio->low->fm_config.mute_coeffs_soft = 0x1B16;
+		fmspeedy_set_reg(0xFFF2CA, radio->low->fm_config.mute_coeffs_soft);
+	}
 
 	API_EXIT(radio);
 }
@@ -373,6 +435,13 @@ void fm_rds_off(struct s610_radio *radio)
 
 void fm_rds_enable(struct s610_radio *radio)
 {
+#ifndef	USE_RDS_HW_DECODER
+	u32 val = fmspeedy_get_reg(0xFFF2D7);
+	u32 mask = ~0x2800;
+
+	val &= mask;
+	fmspeedy_set_reg(0xFFF2D7, val | 0x800);
+#endif	/*USE_RDS_HW_DECODER*/
 	fm_rds_flush_buffers(radio, TRUE);
 }
 
@@ -445,6 +514,13 @@ void fm_update_rds_sync_status(struct s610_radio *radio, bool synced)
 		radio->low->fm_state.last_status_rds_sync = synced;
 	}
 }
+
+#ifndef	USE_RDS_HW_DECODER
+bool fm_get_rds_sync_status(struct s610_radio *radio)
+{
+	return radio->low->fm_state.last_status_rds_sync;
+}
+#endif	/*USE_RDS_HW_DECODER*/
 
 u16 fm_update_rx_status(struct s610_radio *radio, u16 d_status)
 {
@@ -520,15 +596,10 @@ int fm_host_read_rds_data(struct s610_radio *radio, u16 *num_of_block,
 {
 
 	u16 size;
-	u16 *buff = NULL;
+	u8 *buff = NULL;
 	u16 resp;
 
-	while ((buff == NULL) && (*num_of_block)) {
-		buff = kzalloc(*num_of_block * HOST_RDS_BLOCK_SIZE, GFP_KERNEL);
-		if (buff == NULL)
-			(*num_of_block)--;
-	}
-
+	buff = kzalloc(*num_of_block * HOST_RDS_BLOCK_SIZE+1, GFP_KERNEL);
 	if (buff == NULL)
 		return TRUE;
 
@@ -585,11 +656,22 @@ int low_set_freq(struct s610_radio *radio, u32 value)
 
 int low_set_tuner_mode(struct s610_radio *radio, u16 value)
 {
+	API_ENTRY(radio);
+
 	radio->low->fm_state.tuner_mode = value;
 	radio->low->fm_tuner_state.curr_search_down =
 			radio->low->fm_state.search_down;
 
 	fm_set_tuner_mode(radio);
+
+	radio->seek_status = value;
+	if(value == FM_TUNER_STOP_SEARCH_MODE) {
+		/* Seek_cacel complete */
+		complete(&radio->flags_seek_fr_comp);
+		dev_info(radio->dev, ">>> send seek cancel complete");
+	}
+
+	API_EXIT(radio);
 
 	return 0;
 }
@@ -597,12 +679,14 @@ int low_set_tuner_mode(struct s610_radio *radio, u16 value)
 void fm_tuner_set_force_mute(struct s610_radio *radio, bool mute)
 {
 	radio->low->fm_state.mute_forced = mute;
+	radio->low->fm_state.mute_audio = mute;
 	fm_tuner_control_mute(radio);
 }
 
 int low_set_mute_state(struct s610_radio *radio, u16 value)
 {
-	radio->low->fm_state.use_soft_mute = !!(value & MUTE_STATE_MASK_SOFT);
+	/* Default set only fm stat initialie */
+	/*radio->low->fm_state.use_soft_mute = !!(value & MUTE_STATE_MASK_SOFT);*/
 
 	fm_tuner_set_force_mute(radio, !!(value & MUTE_STATE_MASK_HARD));
 	fm_set_blend_mute(radio);
@@ -882,9 +966,11 @@ void fm_rx_check_spur(struct s610_radio *radio)
 	u32 freq_gap_khz;
 	u16 i;
 
-	radio->low->fm_tune_info.rx_setup.spur_ctrl = 0;
+	API_ENTRY(radio);
 
-	for (i = 0; i < 4; i++) {
+	fm_rx_dis_spur_removal();
+
+	for (i = 0; i < radio->tc_on; i++) {
 		if (radio->low->fm_tune_info.rx_setup.fm_freq_khz
 			>= radio->low->fm_spur[i]) {
 			if ((radio->low->fm_tune_info.rx_setup.fm_freq_khz
@@ -893,14 +979,8 @@ void fm_rx_check_spur(struct s610_radio *radio)
 					radio->low->fm_tune_info.rx_setup.fm_freq_khz
 					- radio->low->fm_spur[i];
 
-				if (freq_gap_khz < 30)
-					radio->low->fm_tune_info.rx_setup.spur_ctrl
-					|= (DIS_SPUR_REMOVAL_MONO);
-
 				radio->low->fm_tune_info.rx_setup.spur_freq =
 						(s16)((freq_gap_khz * 2048) / 10);
-				radio->low->fm_tune_info.rx_setup.spur_ctrl
-				|= (EN_SPUR_REMOVAL);
 				fm_rx_en_spur_removal(radio);
 				break;
 			}
@@ -911,20 +991,16 @@ void fm_rx_check_spur(struct s610_radio *radio)
 					radio->low->fm_spur[i]
 					- radio->low->fm_tune_info.rx_setup.fm_freq_khz;
 
-				if (freq_gap_khz < 30)
-					radio->low->fm_tune_info.rx_setup.spur_ctrl
-					|= (DIS_SPUR_REMOVAL_MONO);
-
 				radio->low->fm_tune_info.rx_setup.spur_freq =
 						(s16)(((freq_gap_khz * 2048) / 10) * (-1));
-				radio->low->fm_tune_info.rx_setup.spur_ctrl
-				|= (EN_SPUR_REMOVAL);
 				fm_rx_en_spur_removal(radio);
 				break;
 			}
 		}
 
 	}
+
+	API_EXIT(radio);
 }
 
 void fm_rx_check_spur_mono(struct s610_radio *radio)
@@ -964,7 +1040,11 @@ void fm_lo_prepare_setup(struct s610_radio *radio)
 	u64 fdco_r;
 
 	freq_hz = radio->low->fm_tune_info.lo_setup.rx_lo_req_freq;
-	fref = 26000000;
+	if (radio->low->fm_tune_info.rx_setup.fm_freq_khz == 104000) {
+		fref = 20000000;
+	} else {
+		fref = 26000000;
+	}
 	flimit = 3000000000;
 
 	/* Calculate the division value of LO divider
@@ -1029,14 +1109,14 @@ void fm_sx_reset(void)
 #if (S610_VER == EVT1)
 	/* Reset the FM_SX registers */
 	fmspeedy_set_reg(0xFFF240, 0x009020);
-	fmspeedy_set_reg(0xFFF241, 0x084600);
+	fmspeedy_set_reg(0xFFF241, 0x004600);
 	fmspeedy_set_reg(0xFFF242, 0x27365E);
 	fmspeedy_set_reg(0xFFF243, 0x10BDC8);
 	fmspeedy_set_reg(0xFFF244, 0x24A0D0);
 	fmspeedy_set_reg(0xFFF245, 0x018132);
 	fmspeedy_set_reg(0xFFF246, 0x065A78);
 	fmspeedy_set_reg(0xFFF247, 0x243100);
-	fmspeedy_set_reg(0xFFF248, 0x3C0518);
+	fmspeedy_set_reg(0xFFF248, 0x0C0518);
 	fmspeedy_set_reg(0xFFF249, 0);
 	fmspeedy_set_reg(0xFFF24B, 0);
 	fmspeedy_set_reg(0xFFF24C, 0x01F8F4);
@@ -1197,14 +1277,11 @@ bool fm_aux_pll_initialize(void)
 
 void fm_aux_pll_off(void)
 {
-	fmspeedy_set_reg_field(0xFFF255, 24, (0x0001<<24), 0); /* PLL_EN, default = 0 */
-	fmspeedy_set_reg_field(0xFFF255, 23, (0x0001<<23), 0); /* OUT_EN, default = 0 */
-
-	fmspeedy_set_reg_field(0xFFF258, 27, (0x0001<<27), 0); /* XTAL_EN_FM_BUF, default = 0 */
-	fmspeedy_set_reg_field(0xFFF258, 24, (0x0001<<24), 0); /* XTAL_EN, default = 1 */
-	fmspeedy_set_reg_field(0xFFF258, 17, (0x0001<<17), 0); /* PTAT_EN, default = 1 */
-
-	fmspeedy_set_reg_field(0xFFF259, 0, 0x0001, 0); /* XTAL_IREF_EN, default = 1 */
+	fmspeedy_set_reg(0xFFF255, 0x04300308);
+	fmspeedy_set_reg(0xFFF256, 0);
+	fmspeedy_set_reg(0xFFF257, 0);
+	fmspeedy_set_reg(0xFFF258, 0x05040000);
+	fmspeedy_set_reg(0xFFF259, 0x21);
 }
 
 /****************************************************************************
@@ -1299,17 +1376,18 @@ void fm_set_rssi_thresh(struct s610_radio *radio, fm_tuner_state state)
 static void fm_tuner_control_mute(struct s610_radio *radio)
 {
 	bool mute = radio->low->fm_state.mute_forced
+			|| radio->low->fm_state.mute_audio
 			|| (!radio->low->fm_tuner_state.tune_done);
 	fm_set_mute(mute);
 }
 
-#ifdef MONO_SWITCH_INTERF
-void fm_tuner_set_force_mute(struct s610_radio *radio, bool mute)
+void fm_tuner_set_mute_audio(struct s610_radio *radio, bool mute)
 {
-	radio->low->fm_state.mute_forced = mute;
+	radio->low->fm_state.mute_audio = mute;
 	fm_tuner_control_mute(radio);
 }
 
+#ifdef MONO_SWITCH_INTERF
 void fm_reset_force_mono_interf(struct s610_radio *radio)
 {
 	radio->low->fm_state.force_mono_interf = FALSE;
@@ -1404,8 +1482,7 @@ static void fm_preset_tuned(struct s610_radio *radio)
 static void fm_search_done(struct s610_radio *radio, u16 flags)
 {
 	API_ENTRY(radio);
-	if (!(flags & FLAG_BD_LMT))
-		fm_tuner_set_force_mute(radio, FALSE); /* unmute */
+	fm_tuner_set_mute_audio(radio, FALSE); /* unmute */
 
 	fm_tuner_exit_state(radio);
 	fm_tuner_change_state(radio, TUNER_IDLE);
@@ -1488,13 +1565,13 @@ static void fm_search_check_signal2(unsigned long data)
 				done = TRUE;
 				check_ok = TRUE;
 			}
-#if 1
+
 			else if (ifc_abs > radio->low->fm_config.search_conf.weak_ifca_h) {
 				APIEBUG(radio, "SIG> weak bad %d", ifc_abs);
 				done = TRUE;
 				check_ok = FALSE;
 			}
-#endif
+
 			else if (ifc_abs < min_weak_ifc_abs) {
 				APIEBUG(radio, "SIG> weak mid %d %d", ifc_abs, min_weak_ifc_abs);
 				min_weak_ifc_abs = ifc_abs;
@@ -1505,13 +1582,13 @@ static void fm_search_check_signal2(unsigned long data)
 				done = TRUE;
 				check_ok = TRUE;
 			}
-#if 1
+
 			else if (ifc_abs > radio->low->fm_config.search_conf.normal_ifca_h) {
 				APIEBUG(radio, "SIG> normal bad %d", ifc_abs);
 				done = TRUE;
 				check_ok = FALSE;
 			}
-#endif
+
 			else if (ifc_abs < min_normal_ifc_abs) {
 				APIEBUG(radio, "SIG> normal mid %d %d", ifc_abs, min_weak_ifc_abs);
 				min_normal_ifc_abs = ifc_abs;
@@ -1553,23 +1630,6 @@ static void fm_search_check_signal2(unsigned long data)
 #endif
 
 	if (done) {
-#if 0 /*ifdef USE_NEW_SCAN*/
-		if (!check_ok) {
-			fmspeedy_set_reg(0xFFF2AE, 0xB6D); /* narrow w te */
-			fm_start_if_counter();
-			mdelay(200);
-			ifc_abs = fmspeedy_get_reg(0xFFF2B1);
-
-			if (rssi < -103) {
-				if (ifc_abs < 4000)
-					check_ok = TRUE;
-			} else {
-				if (ifc_abs < 3500)
-					check_ok = TRUE;
-			}
-			APIEBUG(radio, "SIG> check fail confirm %d", ifc_abs);
-		}
-#endif
 		if (check_ok) {
 			u16 flag =
 				fm_update_rx_status(radio,
@@ -1607,7 +1667,6 @@ static void fm_search_check_signal1(struct s610_radio *radio, bool rssi_oor)
 			APIEBUG(radio, "+++++> 0x%x,0x%x,0x%x",
 					radio->wrap_around, radio->seek_freq,
 					radio->low->fm_state.freq);
-#if 1
 			if (radio->wrap_around) {
 				if (radio->seek_freq == radio->low->fm_state.freq) {
 					flag = fm_update_rx_status(radio, d_status);
@@ -1647,17 +1706,7 @@ static void fm_search_check_signal1(struct s610_radio *radio, bool rssi_oor)
 						radio->wrap_around, radio->seek_freq,
 						radio->low->fm_state.freq, flag);
 			}
-#else
-			flag = fm_update_rx_status(radio,
-					fmspeedy_get_reg(0xFFF2CB));
-
-			fm_update_if_count(radio);
-			fm_update_sig_info(radio);
-
-			fm_search_done(radio, flag | FLAG_BD_LMT);
-#endif
 		} else {
-#if 1
 			if (radio->wrap_around &&
 				(radio->seek_freq == radio->low->fm_state.freq)) {
 					flag = fm_update_rx_status(radio, d_status);
@@ -1682,23 +1731,6 @@ static void fm_search_check_signal1(struct s610_radio *radio, bool rssi_oor)
 				schedule_delayed_work(&radio->dwork_tune,
 					msecs_to_jiffies(TUNE_TIME_FAST_MS));
 			}
-#else
-			radio->low->fm_tuner_state.hit_band_limit =
-				fm_tuner_push_freq(
-				radio,
-				radio->low->fm_tuner_state.curr_search_down);
-			/* disable audio out */
-			fm_audio_control(radio, 0, 1, 0x100, 0x1A0);
-
-			fm_set_freq(radio, radio->low->fm_state.freq, 1);
-
-			/* enable audio out */
-			fm_audio_control(radio, 1, 1, 0x100, 0x1A0);
-			radio->tune_fniarg = 0;
-			radio->dwork_tune_counter++;
-			schedule_delayed_work(&radio->dwork_tune,
-				msecs_to_jiffies(TUNE_TIME_FAST_MS));
-#endif
 		}
 	} else {
 			radio->sig2_fniarg = 1;
@@ -1734,13 +1766,21 @@ static void fm_search_tuned(unsigned long data)
 	API_EXIT(radio);
 }
 
-#if 0
-static void fm_idle_audio_pause_handler(struct s610_radio *radio)
-{
-	API_ENTRY(radio);
-	fm_set_flag_bits(radio, FLAG_AUD_PAU); API_EXIT(radio);
+#ifdef USE_FILTER_SELECT_BY_FREQ
+static const u32 filter_freq_very[MAX_FILTER_FREQ_NUM] =
+{	87900, 88100, 95900, 96100, 103900, 104100};
+
+static bool is_freq_in_array(int freq) {
+	int i;
+
+	for (i=0; i < MAX_FILTER_FREQ_NUM; i++) {
+		if (filter_freq_very[i] == freq)
+			return TRUE;
+	}
+	return FALSE;
 }
-#endif
+#endif /* USE_FILTER_SELECT_BY_FREQ */
+
 
 static void fm_start_tune(struct s610_radio *radio, fm_tuner_state new_state)
 {
@@ -1754,21 +1794,24 @@ static void fm_start_tune(struct s610_radio *radio, fm_tuner_state new_state)
 	case TUNER_IDLE:
 		radio->low->fm_tuner_state.tune_done = TRUE;
 
-#ifdef USE_SPUR_CANCEL
-		fm_rx_check_spur_mono(radio);
-#endif
-
 #ifdef USE_IQ_IMBAL_SMOOTH
 		hal_set_fm_image_trim_smooth_config_lock(1);
 #endif /*USE_IQ_IMBAL_SMOOTH*/
 
-	/* Set the filter to use narrow band */
+#ifdef USE_FILTER_SELECT_BY_FREQ
+		if (is_freq_in_array(radio->low->fm_state.freq))
+			/* Set the filter to use very narrow band */
+			fmspeedy_set_reg(0xFFF2AE, 0x0DB6);
+		else
+			/* Set the filter to use narrow band */
+			fmspeedy_set_reg(0xFFF2AE, 0x0B6D);
+#else
 		fmspeedy_set_reg(0xFFF2AE, 0x0B6D);
+#endif /* USE_FILTER_SELECT_BY_FREQ */
+
+		if (!radio->low->fm_state.tuner_mode)
+			radio->low->fm_state.mute_audio = 0;
 		fm_tuner_control_mute(radio);
-#if 0 /*lys0427*/
-		fm_set_handler_if_count(fm_update_if_count_int);
-		fm_set_handler_audio_pause(fm_idle_audio_pause_handler);
-#endif
 
 #ifdef MONO_SWITCH_INTERF
 		fm_reset_force_mono_interf(radio);
@@ -1797,7 +1840,7 @@ static void fm_start_tune(struct s610_radio *radio, fm_tuner_state new_state)
 		break;
 	case TUNER_SEARCH:
 		fm_tuner_enable_rds(radio, FALSE);
-		fm_tuner_set_force_mute(radio, TRUE);
+		fm_tuner_set_mute_audio(radio, TRUE);
 		fm_set_rssi_thresh(radio, new_state);
 		radio->low->fm_tuner_state.hit_band_limit = FALSE;
 
@@ -1850,8 +1893,15 @@ static void fm_tuner_change_state(struct s610_radio *radio,
 	}
 }
 
+static void fm_cancel_delayed_work(struct s610_radio *radio)
+{
+	cancel_delayed_work(&radio->dwork_sig2);
+	cancel_delayed_work(&radio->dwork_tune);
+}
+
 static void fm_tuner_exit_state(struct s610_radio *radio)
 {
+	fm_cancel_delayed_work(radio);
 	fm_set_handler_if_count(NULL);
 	fm_set_handler_audio_pause(NULL);
 	fm_set_rssi_thresh(radio, TUNER_IDLE);
@@ -1974,23 +2024,23 @@ bool fm_tuner_set_power_state(struct s610_radio *radio, bool fm_on, bool rds_on)
 
 
 fm_conf_ini_values low_fm_conf_init = {
-		.demod_conf_ini = 0x2608,
+		.demod_conf_ini = 0x220C,
 		.rssi_adj_ini = 0x003B,
-		.soft_muffle_conf_ini = { 0, 0, 1, 7 },
-		.soft_mute_atten_max_ini = 0x0006,
+		.soft_muffle_conf_ini = { 0x2516, 1, 1, 7 },
+		.soft_mute_atten_max_ini = 0x0007,
 		.stereo_thres_ini = 0x00C8,
 		.narrow_thres_ini = 0x0074,
-		.snr_adj_ini = 0x0034,
-		.snr_smooth_conf_ini = 0x0836,
+		.snr_adj_ini = 0x001C,
+		.snr_smooth_conf_ini = 0x082F,
 #if (S610_VER == EVT1)
-		.mute_coeffs_soft = 0x2514,
+		.mute_coeffs_soft = 0x2516,
 #else /* EVY0 */
 		.mute_coeffs_soft = 0x2528,
 #endif
 		.mute_coeffs_dis = 0x0000,
 #if (S610_VER == EVT1)
-		.blend_coeffs_soft = 0x0C5A,
-		.blend_coeffs_switch =	0x7D82,
+		.blend_coeffs_soft = 0x095A,
+		.blend_coeffs_switch =	0x7D8C,
 #else /* EVY0 */
 		.blend_coeffs_soft = 0x0C50,
 		.blend_coeffs_switch = 0x7D7E,
@@ -1998,7 +2048,7 @@ fm_conf_ini_values low_fm_conf_init = {
 		.blend_coeffs_dis = 0x00FF,
 		.rds_int_byte_count = 3,
 #ifdef USE_NEW_SCAN
-		.search_conf = { 4500, 6600, 8000, 4000, 4800, 7000, FALSE},
+		.search_conf = { 4000, 5000, 7000, 3000, 3800, 5600, FALSE},
 		/*.search_conf = { 4500, 7000, 8000, 4000, 4800, 5600, FALSE},*/
 #else
 		.search_conf = { 4100, 4700, 5500 },
@@ -2015,8 +2065,9 @@ fm_state_s low_fm_state_init = {
 		.rds_pwr_on = FALSE,
 		.force_mono = FALSE,
 		.use_switched_blend = FALSE,
-		.use_soft_mute = FALSE,
-		.mute_forced = TRUE,
+		.use_soft_mute = TRUE,
+		.mute_forced = FALSE,
+		.mute_audio = FALSE,
 		.search_down = FALSE,
 		.use_rbds = FALSE,
 		.save_eblks = FALSE,
@@ -2055,7 +2106,7 @@ fm_tuner_state_s low_fm_tuner_state_init = {
 fm_band_s fm_bands_init[] = { { 87500, 108000 }, { 76000, 90000 } };
 u16 fm_freq_steps_init[] = { 50, 100, 200 };
 #ifdef USE_SPUR_CANCEL
-u32 fm_spur_init[] = {88000, 96000, 100000, 104000};
+extern u32 *fm_spur_init;
 #endif
 
 int init_low_struc(struct s610_radio *radio)
@@ -2068,9 +2119,16 @@ int init_low_struc(struct s610_radio *radio)
 	memcpy(&radio->low->fm_bands, &fm_bands_init, sizeof(fm_band_s) * 2);
 	memcpy(&radio->low->fm_freq_steps,
 		&fm_freq_steps_init, sizeof(u16) * 3);
+	if (radio->sw_mute_weak) {
+		radio->low->fm_config.soft_muffle_conf_ini.muffle_coeffs = 0x1B16;
+		radio->low->fm_config.mute_coeffs_soft = 0x1B16;
+	}
 #ifdef USE_SPUR_CANCEL
-	memcpy(&radio->low->fm_spur, &fm_spur_init,
-			sizeof(u32) * 4);
+	memcpy(&radio->low->fm_spur, fm_spur_init,
+			sizeof(u32) * radio->tc_on);
+	APIEBUG("%s() TC cnt:%d, %d, %d, %d, %d\n", __func__,
+		radio->tc_on, radio->low->fm_spur[0], radio->low->fm_spur[1],
+		radio->low->fm_spur[2], radio->low->fm_spur[3]);
 #endif
 	return 0;
 }

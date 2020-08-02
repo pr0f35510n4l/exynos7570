@@ -1783,8 +1783,6 @@ static irqreturn_t s2mm001_muic_irq_thread(int irq, void *data)
 
 	mutex_lock(&muic_data->muic_mutex);
 
-	wake_lock(&muic_data->muic_wake_lock);
-
 	/* read and clear interrupt status bits */
 	intr1 = s2mm001_i2c_read_byte(i2c, S2MM001_MUIC_REG_INT1);
 	intr2 = s2mm001_i2c_read_byte(i2c, S2MM001_MUIC_REG_INT2);
@@ -1834,7 +1832,6 @@ static irqreturn_t s2mm001_muic_irq_thread(int irq, void *data)
 	s2mm001_muic_detect_dev(muic_data);
 
 skip_detect_dev:
-	wake_unlock(&muic_data->muic_wake_lock);
 	mutex_unlock(&muic_data->muic_mutex);
 
 	return IRQ_HANDLED;
@@ -1987,9 +1984,10 @@ static int s2mm001_muic_probe(struct i2c_client *i2c,
 	mutex_init(&muic_data->muic_mutex);
 
 	muic_data->is_factory_start = false;
-
+#if 0
 	wake_lock_init(&muic_data->muic_wake_lock, WAKE_LOCK_SUSPEND,
 		"muic wake lock");
+#endif
 
 	muic_data->attached_dev = ATTACHED_DEV_UNKNOWN_MUIC;
 	muic_data->is_usb_ready = false;
@@ -2074,7 +2072,6 @@ static int s2mm001_muic_remove(struct i2c_client *i2c)
 		cancel_delayed_work(&muic_data->usb_work);
 		disable_irq_wake(muic_data->i2c->irq);
 		free_irq(muic_data->i2c->irq, muic_data);
-		wake_lock_destroy(&muic_data->muic_wake_lock);
 #if 0
 		wake_lock_destroy(&info->muic_wake_lock);
 #endif

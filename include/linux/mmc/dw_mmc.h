@@ -14,7 +14,6 @@
 #ifndef LINUX_MMC_DW_MMC_H
 #define LINUX_MMC_DW_MMC_H
 
-#include <linux/platform_device.h>
 #include <linux/scatterlist.h>
 #include <linux/mmc/core.h>
 #include <linux/pm_qos.h>
@@ -127,6 +126,7 @@ struct mmc_data;
 struct dw_mci {
 	spinlock_t		lock;
 	void __iomem		*regs;
+	unsigned int		channel;
 
 	struct scatterlist	*sg;
 	struct sg_mapping_iter	sg_miter;
@@ -149,11 +149,11 @@ struct dw_mci {
 	void			*sg_cpu;
 	const struct dw_mci_dma_ops	*dma_ops;
 #ifdef CONFIG_MMC_DW_IDMAC
-	unsigned int		ring_size;
+	unsigned short		ring_size;
 #else
 	struct dw_mci_dma_data	*dma_data;
 #endif
-	unsigned int            desc_sz;
+	unsigned short          desc_sz;
 	struct pm_qos_request	pm_qos_int;
 	u32			cmd_status;
 	u32			data_status;
@@ -162,6 +162,7 @@ struct dw_mci {
 	struct tasklet_struct	tasklet;
 	u32			tasklet_state;
 	struct work_struct	card_work;
+	u32			card_detect_cnt;
 	unsigned long		pending_events;
 	unsigned long		completed_events;
 	enum dw_mci_state	state;
@@ -224,6 +225,17 @@ struct dw_mci {
 
 	/* For argos */
 	unsigned int transferred_cnt;
+
+	/* Sfr dump */
+	struct dw_mci_sfe_ram_dump	*sfr_dump;
+
+#ifdef CONFIG_MMC_DW_EXYNOS_EMMC_POWERCTRL
+	struct regulator        *vemmc;
+	struct regulator        *vqemmc;
+#endif
+	struct buffer_head *self_test_bh;
+	int self_test_mode;
+	struct idmac_desc_64addr *desc_st;
 };
 
 /* DMA ops for Internal/External DMAC interface */
@@ -261,19 +273,19 @@ struct dw_mci_dma_ops {
 #define DW_MCI_QUIRK_ENABLE_ULP			BIT(9)
 /* Use the security management unit */
 #define DW_MCI_QUIRK_USE_SMU			BIT(10)
+/* Switching transfer */
+#define DW_MCI_SW_TRANS				BIT(11)
 
 /* Slot level quirks */
 /* This slot has no write protect */
 #define DW_MCI_SLOT_QUIRK_NO_WRITE_PROTECT	BIT(0)
-
 enum dw_mci_cd_types {
-        DW_MCI_CD_INTERNAL = 1, /* use mmc internal CD line */
-        DW_MCI_CD_EXTERNAL,     /* use external callback */
-        DW_MCI_CD_GPIO,         /* use external gpio pin for CD line */
-        DW_MCI_CD_NONE,         /* no CD line, use polling to detect card */
-        DW_MCI_CD_PERMANENT,    /* no CD line, card permanently wired to host */
+	DW_MCI_CD_INTERNAL = 1, /* use mmc internal CD line */
+	DW_MCI_CD_EXTERNAL,     /* use external callback */
+	DW_MCI_CD_GPIO,         /* use external gpio pin for CD line */
+	DW_MCI_CD_NONE,         /* no CD line, use polling to detect card */
+	DW_MCI_CD_PERMANENT,    /* no CD line, card permanently wired to host */
 };
-
 struct dma_pdata;
 
 struct block_settings {
@@ -282,15 +294,6 @@ struct block_settings {
 	unsigned int	max_blk_count;	/* maximum number of blocks in one req*/
 	unsigned int	max_req_size;	/* maximum number of bytes in one req*/
 	unsigned int	max_seg_size;	/* see blk_queue_max_segment_size */
-};
-
-struct dw_mci_mon_table {
-        u32     range;
-        s32     mif_lock_value;        
-        s32     cpu_lock_value;        
-#ifdef CONFIG_ARM_EXYNOS_MP_CPUFREQ
-        s32     kfc_lock_value;        
-#endif
 };
 
 /* Board platform data */
@@ -323,6 +326,7 @@ struct dw_mci_board {
 	unsigned int qos_int_level;
 	unsigned char io_mode;
 
+	enum dw_mci_cd_types cd_type;
 	struct dw_mci_dma_ops *dma_ops;
 	struct dma_pdata *data;
 	struct block_settings *blk_settings;
@@ -336,26 +340,8 @@ struct dw_mci_board {
 	bool enable_cclk_on_suspend;
 	bool on_suspend;
 
-        /* cd_type: Type of Card Detection method (see cd_types enum above) */ 
-	enum dw_mci_cd_types cd_type;
-	
 	/* Number of descriptors */
 	unsigned int desc_sz;
-
-	/* ext_cd_cleanup: Cleanup external card detect subsystem.
-        * ext_cd_init: Initialize external card detect subsystem.
-        *       notify_func argument is a callback to the dwmci driver
-        *       that triggers the card detection event. Callback arguments:
-        *       dev is pointer to platform device of the host controller,
-        *       state is new state of the card (0 - removed, 1 - inserted).
-        */
-
-        int (*ext_cd_init)(void (*notify_func)
-                        (struct platform_device *, int state));
-        int (*ext_cd_cleanup)(void (*notify_func)
-                        (struct platform_device *, int state));
-
-	struct dw_mci_mon_table *tp_mon_tbl;
 };
 
 #ifdef CONFIG_MMC_DW_IDMAC
@@ -384,6 +370,8 @@ struct idmac_desc_64addr {
 	((d)->des2 = ((d)->des2 & 0xcfffffff) | v << 28)
 #define IDMAC_SET_DAS(d, v) \
 	((d)->des2 = ((d)->des2 & 0x3fffffff) | v << 30)
+#define IDMAC_GET_FAS(d)	((d)->des2 & 0x30000000)
+#define IDMAC_GET_DAS(d)	((d)->des2 & 0xc0000000)
 	u32		des3;	/* Reserved */
 	u32		des4;	/* Lower 32-bits of Buffer Address Pointer 1*/
 	u32		des5;	/* Upper 32-bits of Buffer Address Pointer 1*/
@@ -484,5 +472,9 @@ do {	\
 #define CLEAR		0
 #define AES_CBC		1
 #define AES_XTS		2
+
+#define MMC_FMP_DISK_ENC_MODE	(1 << 0)
+#define MMC_FMP_FILE_ENC_MODE	(1 << 1)
+#define MMC_FMP_SELF_TEST_MODE	(1 << 2)
 
 #endif /* LINUX_MMC_DW_MMC_H */

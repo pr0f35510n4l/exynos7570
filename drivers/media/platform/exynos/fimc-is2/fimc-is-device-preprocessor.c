@@ -318,6 +318,7 @@ static int fimc_is_preproc_gpio_on(struct fimc_is_device_preproc *device)
 	if (!test_and_set_bit(FIMC_IS_MODULE_GPIO_ON, &module->state)) {
 		struct exynos_platform_fimc_is_module *pdata;
 
+#ifdef CONFIG_COMPANION_USE
 		ret = fimc_is_vender_preprocessor_gpio_on_sel(vender,
 			scenario, &gpio_scenario);
 		if (ret) {
@@ -326,6 +327,7 @@ static int fimc_is_preproc_gpio_on(struct fimc_is_device_preproc *device)
 				device, ret);
 			goto p_err;
 		}
+#endif
 
 		pdata = module->pdata;
 		if (!pdata) {
@@ -744,11 +746,13 @@ int fimc_is_preproc_s_input(struct fimc_is_device_preproc *device,
 		goto p_err;
 	}
 
+#ifdef CONFIG_COMPANION_USE
 	ret = fimc_is_vender_preproc_fw_load(vender);
 	if (ret) {
 		err("fimc_is_vender_preproc_fw_load is fail(%d)", ret);
 		goto p_err;
 	}
+#endif
 
 	set_bit(FIMC_IS_PREPROC_S_INPUT, &device->state);
 

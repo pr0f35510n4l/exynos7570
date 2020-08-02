@@ -1067,9 +1067,59 @@ static int mtp_release(struct inode *ip, struct file *fp)
 	return 0;
 }
 #ifdef CONFIG_COMPAT
-static long mtp_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static long mtp_compat_ioctl(struct file *fp, unsigned code, unsigned long value)
 {
-	return mtp_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
+	code = (code == MTP_SEND_FILE_32) ? MTP_SEND_FILE :
+		(code == MTP_RECEIVE_FILE_32) ? MTP_RECEIVE_FILE :
+		(code == MTP_SEND_EVENT_32) ? MTP_SEND_EVENT : MTP_SEND_FILE_WITH_HEADER;
+	
+	switch (code) {
+	case MTP_SEND_FILE:
+	case MTP_RECEIVE_FILE:
+	case MTP_SEND_FILE_WITH_HEADER:
+	{
+		struct mtp_file_range __user *mfr64;
+		struct mtp_file_range_32 __user *mfr32;
+		compat_int_t fd;
+		compat_s64 temp;
+		u16	command;
+		u32	id;
+		mfr32 = (struct mtp_file_range_32 __user *)value;
+		mfr64 = compat_alloc_user_space(sizeof(*mfr64));
+		if (get_user(fd, &mfr32->fd) || put_user(fd, &mfr64->fd) ||
+				get_user(temp, &mfr32->offset) || put_user(temp, &mfr64->offset) ||
+				get_user(temp, &mfr32->length) || put_user(temp, &mfr64->length) ||
+				get_user(command, &mfr32->command) || put_user(command, &mfr64->command) ||
+				get_user(id, &mfr32->transaction_id) || put_user(id, &mfr64->transaction_id))
+			return -EFAULT;
+		/* copy mfr64 to value */
+		value = (uintptr_t) mfr64;
+
+		break;
+	}
+	case MTP_SEND_EVENT:
+	{
+		struct mtp_event __user	*event64;
+		struct mtp_event_32 __user	*event32;
+		__u32 udata;
+		u32 length;
+
+		event32 = (struct mtp_event_32 __user *)value;
+		event64 = compat_alloc_user_space(sizeof(*event64));
+
+		if (get_user(length, &event32->length) ||
+				put_user(length, &event64->length) ||
+				get_user(udata, &event32->compat_data) ||
+				put_user(compat_ptr(udata), &event64->data))
+			return -EFAULT;
+		/* copy event pointer to value */
+		value = (uintptr_t) event64;
+
+		break;
+	}
+	}
+
+	return mtp_ioctl(fp, code, (unsigned long)compat_ptr(value));
 }
 #endif
 /* file operations for /dev/mtp_usb */
@@ -1530,6 +1580,7 @@ struct usb_function *function_alloc_mtp_ptp(struct usb_function_instance *fi,
 {
 	struct mtp_instance *fi_mtp = to_fi_mtp(fi);
 	struct mtp_dev *dev = fi_mtp->dev;
+#ifdef CONFIG_USB_CONFIGFS_UEVENT
 	struct usb_function *function;
 
 	if (mtp_config) {
@@ -1555,6 +1606,25 @@ struct usb_function *function_alloc_mtp_ptp(struct usb_function_instance *fi,
 	function->free_func = mtp_free;
 
 	return function;
+#else
+	dev->function.name = DRIVER_NAME;
+	dev->function.strings = mtp_strings;
+	if (mtp_config) {
+		dev->function.fs_descriptors = fs_mtp_descs;
+		dev->function.hs_descriptors = hs_mtp_descs;
+	} else {
+		dev->function.fs_descriptors = fs_ptp_descs;
+		dev->function.hs_descriptors = hs_ptp_descs;
+	}
+	dev->function.bind = mtp_function_bind;
+	dev->function.unbind = mtp_function_unbind;
+	dev->function.set_alt = mtp_function_set_alt;
+	dev->function.disable = mtp_function_disable;
+	dev->function.setup = mtp_ctrlreq_configfs;
+	dev->function.free_func = mtp_free;
+
+	return &dev->function;
+#endif
 }
 EXPORT_SYMBOL_GPL(function_alloc_mtp_ptp);
 

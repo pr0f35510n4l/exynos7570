@@ -21,6 +21,7 @@ int pmucal_local_enable(unsigned int pd_id)
 	int ret;
 
 	exynos_ss_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
 
 	if (pd_id >= PMUCAL_NUM_PDS) {
 		pr_err("%s pd index(%d) is out of supported range (0~%d).\n",
@@ -51,6 +52,7 @@ int pmucal_local_enable(unsigned int pd_id)
 	}
 
 	exynos_ss_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
 
 	return 0;
 }
@@ -68,6 +70,7 @@ int pmucal_local_disable(unsigned int pd_id)
 	int ret;
 
 	exynos_ss_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
 
 	if (pd_id >= PMUCAL_NUM_PDS) {
 		pr_err("%s pd index(%d) is out of supported range (0~%d).\n",
@@ -93,6 +96,7 @@ int pmucal_local_disable(unsigned int pd_id)
 	}
 
 	exynos_ss_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
 
 	return 0;
 }

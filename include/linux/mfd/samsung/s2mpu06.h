@@ -23,7 +23,11 @@
 #define __S2MPU06_MFD_H__
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
+#if defined(CONFIG_SEC_CHARGER_S2MU005)
 #include <linux/power/sec_charging_common.h>
+#else
+#include <linux/battery/sec_charging_common.h>
+#endif
 
 #define MFD_DEV_NAME "s2mpu06"
 #define M2SH(m) ((m) & 0x0F ? ((m) & 0x03 ? ((m) & 0x01 ? 0 : 1) : \
@@ -31,21 +35,28 @@
 		((m) & 0x30 ? ((m) & 0x10 ? 4 : 5) : ((m) & 0x40 ? 6 : 7)))
 
 
-#if defined(CONFIG_SEC_CHARGER_S2MPU06)
+#if defined(CONFIG_SEC_CHARGER_S2MPU06) || defined(CONFIG_CHARGER_S2MPU06)
 typedef struct s2mpu06_charger_platform_data {
-	sec_charging_current_t *charging_current_table;
+	struct sec_charging_current *charging_current;
 	int chg_float_voltage;
 	char *charger_name;
 	char *fuelgauge_name;
 	bool chg_eoc_dualpath;
 	uint32_t is_1MHz_switching:1;
 	/* 2nd full check */
-	 sec_battery_full_charged_t full_check_type_2nd;
+	sec_battery_full_charged_t full_check_type_2nd;
+	int battery_type;
+	/* USA concept - vf and gnd short detection */
+	bool vf_gnd_short_detection;
+	int vf_gnd_short_det_gpio;
+	int vf_gnd_short_det_irq;
+	/* IVR Threshold */
+	int ivr_threshold;
 } s2mpu06_charger_platform_data_t;
 #endif
 
 
-#if defined(CONFIG_SEC_FUELGAUGE_S2MPU06)
+#if defined(CONFIG_SEC_FUELGAUGE_S2MPU06) || defined(CONFIG_FUELGAUGE_S2MPU06)
 typedef struct s2mpu06_fuelgauge_platform_data {
 	int capacity_max;
 	int capacity_max_margin;
@@ -123,10 +134,10 @@ struct s2mpu06_platform_data {
 	int irq_gpio;
 	bool wakeup;
 
-#if defined(CONFIG_SEC_CHARGER_S2MPU06)
+#if defined(CONFIG_SEC_CHARGER_S2MPU06) || defined(CONFIG_CHARGER_S2MPU06)
 	s2mpu06_charger_platform_data_t *pdata;
 #endif
-#if defined(CONFIG_SEC_FUELGAUGE_S2MPU06)
+#if defined(CONFIG_SEC_FUELGAUGE_S2MPU06) || defined(CONFIG_FUELGAUGE_S2MPU06)
 	s2mpu06_fuelgauge_platform_data_t *fuelgauge_pdata;
 #endif
 

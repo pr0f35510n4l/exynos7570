@@ -31,6 +31,13 @@ config BATTERY_AGE_FORECAST
 	help
 	Say Y to use calc time to full function.
 
+config SAMSUNG_BATTERY_ENG_TEST
+	tristate "set test mode in eng build"
+	default n
+	depends on BATTERY_SAMSUNG
+	help
+	 Say Y to set test mode in eng build
+
 # Fuel Gauge
 
 config FUELGAUGE_DUMMY
@@ -162,6 +169,15 @@ config FUELGAUGE_MAX77823_COULOMB_COUNTING
 	 This mode is for target that consumes high current
 	 like tablet.
 
+config FUELGAUGE_S2MPU06
+        tristate "S2MPU06 fuel gauge driver"
+        default n
+        depends on MFD_S2MPU06 && I2C 
+        help
+         Say Y to include support
+         for S2MPU06 fuel gauge driver.
+         This fuel-gauge can be used in voltage mode.
+
 # Charger
 
 config CHARGER_DUMMY
@@ -292,6 +308,14 @@ config CHARGER_MAX77888
 config CHARGER_S2MU003
         tristate "S2MU003 charger support"
         depends on (MFD_S2MU003) && I2C
+        help
+          Say Y here to enable support for the S2MU003 charger
+          S2MU003 incluse pmic, led driver.
+          You have to define MFD_S2MU003
+
+config CHARGER_S2MPU06
+        tristate "S2MPU06 charger support"
+        depends on MFD_S2MPU06 && I2C
         help
           Say Y here to enable support for the S2MU003 charger
           S2MU003 incluse pmic, led driver.

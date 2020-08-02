@@ -23,6 +23,9 @@
 #include <linux/clk.h>
 #include <linux/workqueue.h>
 
+#ifdef CONFIG_UMTS_MODEM_SS310AP
+#include <linux/exynos-modem-ctrl.h>
+#endif
 #include <soc/samsung/exynos-devfreq.h>
 #include <soc/samsung/bts.h>
 #include <linux/apm-exynos.h>
@@ -41,6 +44,8 @@
 #else
 #define DEVFREQ_MIF_SWITCH_FREQ	(830000)
 #endif
+
+static unsigned long origin_suspend_freq = 0;
 
 u32 sw_volt_table;
 
@@ -63,6 +68,27 @@ static int exynos7570_devfreq_mif_cmu_dump(struct exynos_devfreq_data *data)
 	mutex_lock(&data->devfreq->lock);
 	cal_vclk_dbg_info(dvfs_mif);
 	mutex_unlock(&data->devfreq->lock);
+
+	return 0;
+}
+
+static int exynos7570_devfreq_mif_pm_suspend_prepare(struct exynos_devfreq_data *data)
+{
+#ifdef CONFIG_UMTS_MODEM_SS310AP
+	unsigned long chg_suspend_freq = 0;
+#endif
+
+	if (!origin_suspend_freq)
+		origin_suspend_freq = data->devfreq_profile.suspend_freq;
+
+#ifdef CONFIG_UMTS_MODEM_SS310AP
+	chg_suspend_freq = (unsigned long)ss310ap_get_evs_mode_ext();
+
+	if (chg_suspend_freq)
+		data->devfreq_profile.suspend_freq = chg_suspend_freq;
+	else
+		data->devfreq_profile.suspend_freq = origin_suspend_freq;
+#endif
 
 	return 0;
 }
@@ -279,6 +305,7 @@ static int __init exynos7570_devfreq_mif_init_prepare(struct exynos_devfreq_data
 	data->ops.init_freq_table = exynos7570_devfreq_mif_init_freq_table;
 	data->ops.cl_dvfs_start = exynos7570_devfreq_cl_dvfs_start;
 	data->ops.cl_dvfs_stop = exynos7570_devfreq_cl_dvfs_stop;
+	data->ops.pm_suspend_prepare = exynos7570_devfreq_mif_pm_suspend_prepare;
 	data->ops.cmu_dump = exynos7570_devfreq_mif_cmu_dump;
 	data->ops.set_freq_post = exynos7570_devfreq_mif_set_freq_post;
 

@@ -162,6 +162,10 @@ int sensor_3l2_cis_init(struct v4l2_subdev *subdev)
 	int ret = 0;
 	struct fimc_is_cis *cis;
 	u32 setfile_index = 0;
+#ifdef USE_CAMERA_HW_BIG_DATA
+	struct cam_hw_param *hw_param = NULL;
+	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
+#endif
 	cis_setting_info setinfo;
 	setinfo.param = NULL;
 	setinfo.return_value = 0;
@@ -180,6 +184,15 @@ int sensor_3l2_cis_init(struct v4l2_subdev *subdev)
 
 	ret = sensor_cis_check_rev(cis);
 	if (ret < 0) {
+#ifdef USE_CAMERA_HW_BIG_DATA
+		sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
+		if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
+			fimc_is_sec_get_rear_hw_param(&hw_param);
+		else if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
+			fimc_is_sec_get_front_hw_param(&hw_param);
+		if(hw_param)
+			hw_param->i2c_sensor_err_cnt++;
+#endif
 		err("sensor_3l2_check_rev is fail");
 		goto p_err;
 	}
@@ -230,8 +243,8 @@ int sensor_3l2_cis_log_status(struct v4l2_subdev *subdev)
 	int ret = 0;
 	struct fimc_is_cis *cis;
 	struct i2c_client *client = NULL;
-	u8 data8;
-	u16 data16;
+	u8 data8 = 0;
+	u16 data16 = 0;
 
 	BUG_ON(!subdev);
 
@@ -1617,6 +1630,7 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_get_min_digital_gain = sensor_3l2_cis_get_min_digital_gain,
 	.cis_get_max_digital_gain = sensor_3l2_cis_get_max_digital_gain,
 	.cis_compensate_gain_for_extremely_br = sensor_cis_compensate_gain_for_extremely_br,
+	.cis_wait_streamoff = sensor_cis_wait_streamoff,
 };
 
 int cis_3l2_probe(struct i2c_client *client,
@@ -1770,6 +1784,7 @@ MODULE_DEVICE_TABLE(of, exynos_fimc_is_cis_3l2_match);
 
 static const struct i2c_device_id cis_3l2_idt[] = {
 	{ SENSOR_NAME, 0 },
+	{},
 };
 
 static struct i2c_driver cis_3l2_driver = {

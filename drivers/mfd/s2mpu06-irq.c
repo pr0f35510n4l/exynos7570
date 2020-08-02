@@ -26,6 +26,7 @@
 #include <linux/mfd/samsung/s2mpu06.h>
 #include <linux/mfd/samsung/s2mpu06-private.h>
 
+#include <sound/soc.h>
 #include <sound/cod9002x.h>
 
 static const u8 s2mpu06_mask_reg[] = {
@@ -121,6 +122,66 @@ static const struct s2mpu06_irq_data s2mpu06_irqs[] = {
 	DECLARE_IRQ(S2MPU06_FG_IRQ_INIT_ST_INT,		FG_INT, 1 << 3),
 };
 
+static const char * const s2mpu06_irqs_name[] = {
+	/* PMIC */
+	"S2MPU06_PMIC_IRQ_PWRONR_INT1",
+	"S2MPU06_PMIC_IRQ_PWRONF_INT1",
+	"S2MPU06_PMIC_IRQ_JIGONBF_INT1",
+	"S2MPU06_PMIC_IRQ_JIGONBR_INT1",
+	"S2MPU06_PMIC_IRQ_ACOKBF_INT1",
+	"S2MPU06_PMIC_IRQ_ACOKBR_INT1",
+	"S2MPU06_PMIC_IRQ_PWRON1S_INT1",
+	"S2MPU06_PMIC_IRQ_MRB_INT1",
+
+	"S2MPU06_PMIC_IRQ_RTC60S_INT2",
+	"S2MPU06_PMIC_IRQ_RTCA1_INT2",
+	"S2MPU06_PMIC_IRQ_RTCA0_INT2",
+	"S2MPU06_PMIC_IRQ_SMPL_INT2",
+	"S2MPU06_PMIC_IRQ_RTC1S_INT2",
+	"S2MPU06_PMIC_IRQ_WTSR_INT2",
+	"S2MPU06_PMIC_IRQ_WRSTB_INT2",
+
+	"S2MPU06_PMIC_IRQ_120C_INT3",
+	"S2MPU06_PMIC_IRQ_140C_INT3",
+	"S2MPU06_PMIC_IRQ_TSD_INT3",
+
+	/* Charger */
+	"S2MPU06_CHG_IRQ_EOC_INT1",
+	"S2MPU06_CHG_IRQ_CINIR_INT1",
+	"S2MPU06_CHG_IRQ_BATP_INT1",
+	"S2MPU06_CHG_IRQ_BATLV_INT1",
+	"S2MPU06_CHG_IRQ_TOPOFF_INT1",
+	"S2MPU06_CHG_IRQ_CINOVP_INT1",
+	"S2MPU06_CHG_IRQ_CHGTSD_INT1",
+
+	"S2MPU06_CHG_IRQ_CHGVINVR_INT2",
+	"S2MPU06_CHG_IRQ_CHGTR_INT2",
+	"S2MPU06_CHG_IRQ_TMROUT_INT2",
+	"S2MPU06_CHG_IRQ_RECHG_INT2",
+	"S2MPU06_CHG_IRQ_CHGTERM_INT2",
+	"S2MPU06_CHG_IRQ_BATOVP_INT2",
+	"S2MPU06_CHG_IRQ_CHGVIN_INT2",
+	"S2MPU06_CHG_IRQ_CIN2BAT_INT2",
+
+	"S2MPU06_CHG_IRQ_CHGSTS_INT3",
+	"S2MPU06_CHG_IRQ_OTGILIM_INT3",
+	"S2MPU06_CHG_IRQ_BSTINLV_INT3",
+	"S2MPU06_CHG_IRQ_BSTILIM_INT3",
+	"S2MPU06_CHG_IRQ_VMIDOVP_INT3",
+
+	"S2MPU06_CHG_IRQ_WDT_PM",
+	"S2MPU06_CHG_IRQ_TSD_PM",
+	"S2MPU06_CHG_IRQ_VDDALV_PM",
+
+	/* Fuelgauge */
+	"S2MPU06_FG_IRQ_VBAT_L_INT",
+	"S2MPU06_FG_IRQ_SOC_L_INT",
+	"S2MPU06_FG_IRQ_IDLE_ST_INT",
+	"S2MPU06_FG_IRQ_INIT_ST_INT",
+
+	"S2MPU06_IRQ_NR"
+};
+
 static void s2mpu06_irq_lock(struct irq_data *data)
 {
 	struct s2mpu06_dev *s2mpu06 = irq_get_chip_data(data->irq);
@@ -187,6 +248,14 @@ static struct irq_chip s2mpu06_irq_chip = {
 	.irq_unmask		= s2mpu06_irq_unmask,
 };
 
+int codec_notifier_flag = 0;
+
+void set_codec_notifier_flag()
+{
+	codec_notifier_flag = 1;
+}
+EXPORT_SYMBOL(set_codec_notifier_flag);
+
 static irqreturn_t s2mpu06_irq_thread(int irq, void *data)
 {
 	struct s2mpu06_dev *s2mpu06 = data;
@@ -219,8 +288,13 @@ static irqreturn_t s2mpu06_irq_thread(int irq, void *data)
 		}
 
 		pr_info("%s: pmic interrupt(0x%02x, 0x%02x, 0x%02x)\n",
-			 __func__, irq_reg[PMIC_INT1], irq_reg[PMIC_INT2],
-			 irq_reg[PMIC_INT3]);
+			__func__, irq_reg[PMIC_INT1], irq_reg[PMIC_INT2],
+			irq_reg[PMIC_INT3]);
+
+		pr_info("%s: pmic interrupt mask(0x%02x, 0x%02x, 0x%02x)\n",
+			__func__, s2mpu06->irq_masks_cur[PMIC_INT1], 
+			s2mpu06->irq_masks_cur[PMIC_INT2], 
+			s2mpu06->irq_masks_cur[PMIC_INT3]);
 	}
 
 	if(irq_src & S2MPU06_IRQSRC_CODEC) {
@@ -230,7 +304,9 @@ static irqreturn_t s2mpu06_irq_thread(int irq, void *data)
 			ret = s2mpu06_read_codec_reg(s2mpu06->codec, 0x2, &irq2_codec);
 			ret = s2mpu06_read_codec_reg(s2mpu06->codec, 0x3, &irq3_codec);
 			ret = s2mpu06_read_codec_reg(s2mpu06->codec, 0x7, &status1);
-			cod9002x_call_notifier(irq1_codec, irq2_codec, irq3_codec, status1);
+
+			if(codec_notifier_flag)
+				cod9002x_call_notifier(irq1_codec, irq2_codec, irq3_codec, status1);
 		}
 	}
 
@@ -244,8 +320,14 @@ static irqreturn_t s2mpu06_irq_thread(int irq, void *data)
 			return IRQ_NONE;
 		}
 
-		pr_info("%s: charger interrupt(0x%02x, 0x%02x, 0x%02x, 0x%02x)\n", __func__,
-			irq_reg[CHG_INT1], irq_reg[CHG_INT2], irq_reg[CHG_INT3], irq_reg[CHG_PMIC_INT]);
+		pr_info("%s: charger interrupt(0x%02x, 0x%02x, 0x%02x, 0x%02x)\n",
+			__func__, irq_reg[CHG_INT1], irq_reg[CHG_INT2], irq_reg[CHG_INT3],
+			irq_reg[CHG_PMIC_INT]);
+
+		pr_info("%s: charger interrupt mask(0x%02x, 0x%02x, 0x%02x, 0x%02x)\n",
+			__func__, s2mpu06->irq_masks_cur[CHG_INT1],
+			s2mpu06->irq_masks_cur[CHG_INT2], s2mpu06->irq_masks_cur[CHG_INT3],
+			s2mpu06->irq_masks_cur[CHG_PMIC_INT]);
 	}
 
 	if (irq_src & S2MPU06_IRQSRC_FG) {
@@ -260,6 +342,8 @@ static irqreturn_t s2mpu06_irq_thread(int irq, void *data)
 		pr_info("%s: fuelgauge interrupt(0x%02x)\n", __func__,
 			irq_reg[FG_INT]);
 
+		pr_info("%s: fuelgauge interrupt mask(0x%02x)\n", __func__,
+			s2mpu06->irq_masks_cur[FG_INT]);
 	}
 	/* Apply masking */
 	for (i = 0; i < S2MPU06_IRQ_GROUP_NR; i++)
@@ -267,8 +351,10 @@ static irqreturn_t s2mpu06_irq_thread(int irq, void *data)
 
 	/* Report */
 	for (i = 0; i < S2MPU06_IRQ_NR; i++) {
-		if (irq_reg[s2mpu06_irqs[i].group] & s2mpu06_irqs[i].mask)
+		if (irq_reg[s2mpu06_irqs[i].group] & s2mpu06_irqs[i].mask) {
+			pr_info("%s: interrupt caused by %s\n", __func__, s2mpu06_irqs_name[i]);
 			handle_nested_irq(s2mpu06->irq_base + i);
+		}
 	}
 
 	return IRQ_HANDLED;

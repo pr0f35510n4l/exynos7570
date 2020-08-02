@@ -259,16 +259,16 @@ int hrvc_load_ldfw(void)
 	struct s5p_mfc_dev *dev = g_mfc_dev[0];
 	char *virt_base, *virt_end;
 
-	if (dev->drm_fw_status > 0) {
-		mfc_info_dev("secure fw was loaded\n");
-		return 0;
-	}
-
 	mfc_debug_enter();
 
 	if (!dev) {
 		mfc_err("no mfc device to run\n");
 		return -EINVAL;
+	}
+
+	if (dev->drm_fw_status > 0) {
+		mfc_info_dev("secure fw was loaded\n");
+		return 0;
 	}
 
 	ret = request_firmware((const struct firmware **)&fw_blob,

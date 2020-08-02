@@ -1875,6 +1875,7 @@ MODULE_DEVICE_TABLE(of, exynos_fimc_is_cis_6b2_match);
 
 static const struct i2c_device_id cis_6b2_idt[] = {
 	{ SENSOR_NAME, 0 },
+	{},
 };
 
 static struct i2c_driver cis_6b2_driver = {

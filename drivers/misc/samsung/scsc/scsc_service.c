@@ -230,7 +230,9 @@ int scsc_mx_service_start(struct scsc_service *service, scsc_mifram_ref ref)
 {
 	struct scsc_mx *mx = service->mx;
 	struct srvman *srvman = scsc_mx_get_srvman(mx);
+	struct mxman *mxman = scsc_mx_get_mxman(service->mx);
 	int                 r;
+	struct timeval tval = {};
 
 	SCSC_TAG_INFO(MXMAN, "\n");
 #ifdef CONFIG_SCSC_CHV_SUPPORT
@@ -240,8 +242,9 @@ int scsc_mx_service_start(struct scsc_service *service, scsc_mifram_ref ref)
 	mutex_lock(&srvman->api_access_mutex);
 	wake_lock(&srvman->sm_wake_lock);
 	if (srvman->error) {
-		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x\n",
-			     scsc_mx_get_mxman(service->mx)->scsc_panic_code);
+		tval = ns_to_timeval(mxman->last_panic_time);
+		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x happened at [%6lu.%06ld]\n",
+				mxman->scsc_panic_code, tval.tv_sec, tval.tv_usec);
 		wake_unlock(&srvman->sm_wake_lock);
 		mutex_unlock(&srvman->api_access_mutex);
 		return -EILSEQ;
@@ -305,7 +308,9 @@ int scsc_mx_service_stop(struct scsc_service *service)
 {
 	struct scsc_mx *mx = service->mx;
 	struct srvman *srvman = scsc_mx_get_srvman(mx);
+	struct mxman *mxman = scsc_mx_get_mxman(service->mx);
 	int r;
+	struct timeval tval = {};
 
 	SCSC_TAG_INFO(MXMAN, "\n");
 #ifdef CONFIG_SCSC_CHV_SUPPORT
@@ -315,8 +320,9 @@ int scsc_mx_service_stop(struct scsc_service *service)
 	mutex_lock(&srvman->api_access_mutex);
 	wake_lock(&srvman->sm_wake_lock);
 	if (srvman->error) {
-		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x\n",
-			     scsc_mx_get_mxman(service->mx)->scsc_panic_code);
+		tval = ns_to_timeval(mxman->last_panic_time);
+		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x happened at [%6lu.%06ld]\n",
+				mxman->scsc_panic_code, tval.tv_sec, tval.tv_usec);
 		wake_unlock(&srvman->sm_wake_lock);
 		mutex_unlock(&srvman->api_access_mutex);
 		return -EILSEQ;
@@ -438,12 +444,15 @@ int scsc_mx_service_close(struct scsc_service *service)
 	struct scsc_mx *mx = service->mx;
 	struct srvman  *srvman = scsc_mx_get_srvman(mx);
 	bool           empty;
+	struct timeval tval = {};
 
 	SCSC_TAG_INFO(MXMAN, "\n");
 	mutex_lock(&srvman->api_access_mutex);
 	wake_lock(&srvman->sm_wake_lock);
 	if (srvman->error) {
-		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x\n", mxman->scsc_panic_code);
+		tval = ns_to_timeval(mxman->last_panic_time);
+		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x happened at [%6lu.%06ld]\n",
+				mxman->scsc_panic_code, tval.tv_sec, tval.tv_usec);
 		mutex_unlock(&srvman->api_access_mutex);
 		wake_unlock(&srvman->sm_wake_lock);
 		return -EIO;
@@ -474,14 +483,16 @@ struct scsc_service *scsc_mx_service_open(struct scsc_mx *mx, enum scsc_service_
 	struct srvman       *srvman = scsc_mx_get_srvman(mx);
 	struct mxman        *mxman = scsc_mx_get_mxman(mx);
 	bool                empty;
+	struct timeval tval = {};
 
 	SCSC_TAG_INFO(MXMAN, "\n");
 
 	mutex_lock(&srvman->api_access_mutex);
 	wake_lock(&srvman->sm_wake_lock);
 	if (srvman->error) {
-		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x\n", mxman->scsc_panic_code);
-		wake_unlock(&srvman->sm_wake_lock);
+		tval = ns_to_timeval(mxman->last_panic_time);
+		SCSC_TAG_ERR(MXMAN, "error: refused due to previous f/w failure scsc_panic_code=0x%x happened at [%6lu.%06ld]\n",
+				mxman->scsc_panic_code, tval.tv_sec, tval.tv_usec);
 		mutex_unlock(&srvman->api_access_mutex);
 		*status = -EILSEQ;
 		return NULL;

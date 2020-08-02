@@ -83,7 +83,6 @@
 
 int ist30xx_read_chksum(struct i2c_client *client, u32 *chksum);
 int ist30xx_read_chksum_all(struct i2c_client *client, u32 *chksum);
-int ist30xxc_isp_info_read(struct ist30xx_data *data, u32 addr, u32 *buf32, u32 len);
 
 int ist30xx_get_update_info(struct ist30xx_data *data, const u8 *buf,
 			     const u32 size);

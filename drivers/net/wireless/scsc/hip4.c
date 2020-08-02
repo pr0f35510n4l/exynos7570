@@ -1236,7 +1236,7 @@ int hip4_init(struct slsi_hip4 *hip)
 			return -EFAULT;
 		hip_control->config_v4.q_loc[i] = (u32)ref;
 	}
-	/***** END VERSION 3 *******/
+	/***** END VERSION 2 *******/
 
 	/* Initialize hip_control table for version 2 */
 	/***** VERSION 3 *******/

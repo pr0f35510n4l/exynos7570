@@ -148,12 +148,8 @@ static int slsi_rx_netdev_mlme(struct slsi_dev *sdev, struct net_device *dev, st
 		break;
 	case MLME_AC_PRIORITY_UPDATE_IND:
 		SLSI_DBG1(sdev, SLSI_MLME, "Unexpected MLME_AC_PRIORITY_UPDATE_IND\n");
+		slsi_kfree_skb(skb);
 		break;
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	case MLME_RMC_LEADER_SELECTED_IND:
-		slsi_rx_rmc_leader_ind(sdev, dev, skb);
-		break;
-#endif          /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
 #ifdef CONFIG_SCSC_WLAN_GSCAN_ENABLE
 	case MLME_AP_LOSS_IND:
 		slsi_hotlist_ap_lost_indication(sdev, dev, skb);

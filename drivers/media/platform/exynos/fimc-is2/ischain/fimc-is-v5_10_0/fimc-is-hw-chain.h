@@ -11,6 +11,9 @@
 #ifndef FIMC_IS_HW_CHAIN_V5_10_H
 #define FIMC_IS_HW_CHAIN_V5_10_H
 
+#include "fimc-is-groupmgr.h"
+#include "fimc-is-config.h"
+
 #define GROUP_HW_MAX	(GROUP_SLOT_MAX)
 
 #define IORESOURCE_3AA		0
@@ -47,7 +50,7 @@ enum hwip_interrupt_map {
 #define MCSC_PRECISION		(20)
 #define MCSC_POLY_RATIO_UP	(8)
 #define MCSC_POLY_RATIO_DOWN	(4)
-#define MCSC_POST_RATIO_DOWN	(7)
+#define MCSC_POST_RATIO_DOWN	(4)
 #define MCSC_POST_WA
 #define MCSC_POST_WA_SHIFT	(8)	/* 256 = 2^8 */
 

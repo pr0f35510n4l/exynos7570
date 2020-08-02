@@ -48,10 +48,8 @@
 #define FIXED_SENSOR_DEBUG
 #define ENABLE_RESERVED_MEM
 
-#define ENABLE_SOC_CAMERA  //enable for use soc camera
-
 #if defined(CONFIG_PM_DEVFREQ)
-//#define ENABLE_DVFS
+#define ENABLE_DVFS
 #define START_DVFS_LEVEL FIMC_IS_SN_MAX
 #endif /* CONFIG_PM_DEVFREQ */
 
@@ -64,8 +62,10 @@
 
 #if defined(CONFIG_USE_DIRECT_IS_CONTROL)
 #undef ENABLE_IS_CORE
+#define ENABLE_FPSIMD_FOR_USER
 #else
 #define ENABLE_IS_CORE
+#undef ENABLE_FPSIMD_FOR_USER
 #define ENABLE_FW_SHARE_DUMP
 #endif
 
@@ -91,8 +91,8 @@
  * =================================================================================================
  */
 
-/*#define DEBUG_LOG_MEMORY*/
-#define DEBUG
+#define DEBUG_LOG_MEMORY
+/* #define DEBUG */
 /* #define DBG_PSV */
 #define DBG_VIDEO
 #define DBG_DEVICE

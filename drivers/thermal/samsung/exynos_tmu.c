@@ -46,6 +46,10 @@
 #include "exynos_thermal_common.h"
 #include "exynos_tmu.h"
 #include "exynos_tmu_data.h"
+#include <trace/events/exynos.h>
+#ifdef CONFIG_SEC_EXT
+#include <linux/sec_ext.h>
+#endif
 
 #ifdef CONFIG_CPU_THERMAL_IPA
 static unsigned int sensor_count = 0;
@@ -676,10 +680,35 @@ static int exynos_tmu_read(struct exynos_tmu_data *data)
 		max_temp = exynos_tmu_max_temp_read(data);
 #endif
 	exynos_ss_thermal(pdata, temp, "READ" , 0);
+	trace_exynos_thermal(pdata, temp, "READ" , 0);
 	mutex_unlock(&data->lock);
 
 	return temp;
 }
+
+#ifdef CONFIG_SEC_BOOTSTAT
+void sec_bootstat_get_thermal(int *temp, int size)
+{
+	struct exynos_tmu_data *devnode;
+	int i;
+
+	list_for_each_entry(devnode, &dtm_dev_list, node) {
+		if(devnode->pdata->d_type == CLUSTER0)
+			i = 0;
+		else if(devnode->pdata->d_type == CLUSTER1)
+			i = 1;
+		else if(devnode->pdata->d_type == GPU)
+			i = 2;
+		else if(devnode->pdata->d_type == ISP)
+			i = 3;
+		else
+			continue;
+	
+		if (i < size)
+			temp[i] = exynos_tmu_read(devnode);
+	}
+}
+#endif
 
 #ifdef CONFIG_THERMAL_EMULATION
 static int exynos_tmu_set_emulation(void *drv_data, unsigned long temp)

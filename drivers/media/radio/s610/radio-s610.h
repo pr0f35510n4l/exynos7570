@@ -5,10 +5,15 @@
 #define DRIVER_CARD "S610 FM Receiver"
 
 #define	ENABLE_RDS_WORK_QUEUE
-#undef	ENABLE_RDS_WORK_QUEUE
+/*#undef	ENABLE_RDS_WORK_QUEUE*/
 
 #define	ENABLE_IF_WORK_QUEUE
 /*#undef	ENABLE_IF_WORK_QUEUE*/
+
+#define	USE_FM_LNA_ENABLE
+/*#undef	USE_FM_LNA_ENABLE*/
+
+#define USE_AUDIO_PM
 
 /* DEBUG :: Print debug for debug *******/
 #define  SUPPORT_FM_DEBUG
@@ -141,7 +146,7 @@ enum fm_rds_mode {
 #define FM_RX_VOLUME_MAX	70
 
 /* Volume gain step */
-#define FM_RX_VOLUME_GAIN_STEP	0x370
+#define FM_RX_VOLUME_GAIN_STEP	16
 
 #define FM_SEARCH_DIRECTION_UP	0
 #define FM_SEARCH_DIRECTION_DOWN	1
@@ -163,10 +168,13 @@ enum fm_rds_mode {
 #define FM_RDS_BLK_SIZE		3	/* 3 bytes */
 
 /* default RSSI value for init */
-#define FM_DEFAULT_RSSI_THRESHOLD	0x92
+#define FM_DEFAULT_RSSI_THRESHOLD	0x8E
 
 /* Reset pre-tune value */
 #define RESET_PRETUNE_VALUE     103500
+
+#define GPIO_LOW		0
+#define GPIO_HIGH		1
 
 struct s610_radio;
 
@@ -330,13 +338,28 @@ struct s610_radio {
 	u8 speedy_error;
 	u16 seek_mode;
 	u32 seek_freq;	/* seek start frquency */
+	u32 seek_status;
 	u32 wrap_around;
+	u32 iclkaux;
 	void __iomem *fmspeedy_base;
 	void __iomem *fm_speed_m_base;
+#ifdef USE_FM_LNA_ENABLE
+	int elna_gpio;
+	int dtv_ctrl_gpio;
+#endif /* USE_FM_EXTERN_PLL */
 	struct platform_device *pdev;
 	struct device *dev;
 	struct clk *clk;
-
+#ifdef USE_AUDIO_PM
+	struct device *a_dev;
+#endif /* USE_AUDIO_PM */
+	int tc_on;
+	int vol_num;
+	u32 *vol_level_mod;
+	u32 *vol_level_tmp;
+	int vol_3db_att;
+	int rssi_est_on;
+	int sw_mute_weak;
 /*	debug print counter */
 	int idle_cnt_mod;
 	int rds_cnt_mod;
@@ -396,6 +419,11 @@ extern void fmspeedy_set_reg(u32 addr, u32 data);
 
 extern void fm_update_rssi(struct s610_radio *radio);
 extern void fm_update_snr(struct s610_radio *radio);
+#ifdef VOLUME_CTRL_S610
+extern void fm_set_audio_gain(struct s610_radio *radio, u16 gain);
+#endif /*VOLUME_CTRL_S610*/
+extern void fm_aux_pll_off(void);
+extern void fmspeedy_wakeup(void);
 
 #endif /* RADIO_S610_H */
 

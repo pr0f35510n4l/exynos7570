@@ -39,7 +39,6 @@
 struct s2mpw01_charger_data {
 	struct i2c_client       *client;
 	struct device *dev;
-	struct s2mpw01_dev *iodev;
 	struct s2mpw01_platform_data *s2mpw01_pdata;
 	struct delayed_work	charger_work;
 	struct workqueue_struct *charger_wqueue;
@@ -98,9 +97,7 @@ static enum power_supply_property s2mpw01_charger_props[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
-#if defined(CONFIG_ARCH_SWA100)
 	POWER_SUPPLY_PROP_CURRENT_AVG,
-#endif
 	POWER_SUPPLY_PROP_CURRENT_NOW,
 	POWER_SUPPLY_PROP_CHARGE_OTG_CONTROL,
 };
@@ -133,25 +130,7 @@ static void s2mpw01_test_read(struct i2c_client *i2c)
 	char str[1016] = {0,};
 	int i;
 
-	for (i = 0x0; i <= 0x0a; i++) {
-		s2mpw01_read_reg(i2c, i, &data);
-
-		sprintf(str+strlen(str), "0x%02x:0x%02x, ", i, data);
-	}
-
-	pr_err("[DEBUG]%s: %s\n", __func__, str);
-
-	str[0] = '\0';
-	for (i = 0x0b; i <= 0x14; i++) {
-		s2mpw01_read_reg(i2c, i, &data);
-
-		sprintf(str+strlen(str), "0x%02x:0x%02x, ", i, data);
-	}
-
-	pr_err("[DEBUG]%s: %s\n", __func__, str);
-
-	str[0] = '\0';
-	for (i = 0x15; i <= 0x17; i++) {
+	for (i = 0x0; i <= 0x17; i++) {
 		s2mpw01_read_reg(i2c, i, &data);
 
 		sprintf(str+strlen(str), "0x%02x:0x%02x, ", i, data);
@@ -167,6 +146,8 @@ static void s2mpw01_enable_charger_switch(struct s2mpw01_charger_data *charger,
 		pr_err("[DEBUG]%s: turn on charger\n", __func__);
 
 		/* s2mpw01 think doesn`t need to set like this */
+		s2mpw01_update_reg(charger->client, S2MPW01_CHG_REG_CTRL1, 0 , EN_CHG_MASK);
+		msleep(50);
 		s2mpw01_update_reg(charger->client, S2MPW01_CHG_REG_CTRL1, EN_CHG_MASK, EN_CHG_MASK);
 	} else {
 		charger->full_charged = false;
@@ -175,37 +156,11 @@ static void s2mpw01_enable_charger_switch(struct s2mpw01_charger_data *charger,
 	}
 }
 
-static void s2mpw01_topoff_interrupt_onoff(struct s2mpw01_charger_data *charger, int onoff)
-{
-	if (onoff > 0) {
-		/* Use top-off interrupt. Masking off */
-		pr_err("[DEBUG]%s: Use top-off interrupt: 0x%x, 0x%x\n", __func__,
-			charger->iodev->irq_masks_cur[3], charger->iodev->irq_masks_cache[3]);
-		charger->iodev->irq_masks_cur[3] &= ~0x04;
-		charger->iodev->irq_masks_cache[3] &= ~0x04;
-		charger->iodev->topoff_mask_status = 1;
-
-		s2mpw01_enable_charger_switch(charger, false);
-		msleep(100);
-		s2mpw01_update_reg(charger->client, S2MPW01_CHG_REG_INT1M, 0x00, 0x04);
-		s2mpw01_enable_charger_switch(charger, true);
-	} else {
-		/* Not use top-off interrupt. Masking */
-		s2mpw01_update_reg(charger->client, S2MPW01_CHG_REG_INT1M, 0x04, 0x04);
-		pr_err("[DEBUG]%s: Top-off interrupt Masking: 0x%x, 0x%x\n", __func__,
-			charger->iodev->irq_masks_cur[3], charger->iodev->irq_masks_cache[3]);
-		charger->iodev->irq_masks_cur[3] |= 0x04;
-		charger->iodev->irq_masks_cache[3] |= 0x04;
-		charger->iodev->topoff_mask_status = 0;
-	}
-
-}
 
 static void s2mpw01_set_regulation_voltage(struct s2mpw01_charger_data *charger,
 		int float_voltage)
 {
 	int data;
-	int recharge_voltage;
 
 	pr_err("[DEBUG]%s: float_voltage %d\n", __func__, float_voltage);
 	if (float_voltage <= 4200)
@@ -217,18 +172,6 @@ static void s2mpw01_set_regulation_voltage(struct s2mpw01_charger_data *charger,
 
 	s2mpw01_update_reg(charger->client,
 			S2MPW01_CHG_REG_CTRL5, data << SET_VF_VBAT_SHIFT, SET_VF_VBAT_MASK);
-
-	recharge_voltage = float_voltage - 50;
-	pr_err("[DEBUG]%s: recharge_voltage %d\n", __func__, recharge_voltage);
-	if (recharge_voltage <= 4150)
-		data = 0;
-	else if (recharge_voltage > 4150 && recharge_voltage <= 4500)
-		data = (recharge_voltage - 4150) / 50;
-	else
-		data = 0x7;
-
-	s2mpw01_update_reg(charger->client,
-			S2MPW01_CHG_REG_CTRL3, data << SET_VF_VBAT_SHIFT, SET_VF_VBAT_MASK);
 }
 
 static void s2mpw01_set_fast_charging_current(struct i2c_client *i2c,
@@ -236,21 +179,16 @@ static void s2mpw01_set_fast_charging_current(struct i2c_client *i2c,
 {
 	int data;
 
-	pr_info("[DEBUG]%s: current  %d\n", __func__, charging_current);
+	pr_err("[DEBUG]%s: current  %d\n", __func__, charging_current);
 	if (charging_current <= 150)
-		data = 0x6;
-	else if (charging_current >= 150 && charging_current < 175)
-		data = 0x0;
-	else if (charging_current >= 175 && charging_current < 200)
-		data = 0x7;
-	else if (charging_current >= 200 && charging_current <= 400)
-		data = (charging_current - 200) / 50 + 1;
+		data = 0;
+	else if (charging_current > 150 && charging_current <= 400)
+		data = (charging_current - 150) / 50;
 	else
 		data = 0x5;
 
 	s2mpw01_update_reg(i2c, S2MPW01_CHG_REG_CTRL2, data << FAST_CHARGING_CURRENT_SHIFT,
 			FAST_CHARGING_CURRENT_MASK);
-	s2mpw01_test_read(i2c);
 }
 
 static int s2mpw01_get_fast_charging_current(struct i2c_client *i2c)
@@ -264,15 +202,9 @@ static int s2mpw01_get_fast_charging_current(struct i2c_client *i2c)
 
 	data = data & FAST_CHARGING_CURRENT_MASK;
 
-	if (data <= 0x5)
-		ret = data * 50 + 150;
-	else if (data == 0x6)
-		ret = 75;
-	else
-		ret = 175;
-
-	pr_info("[DEBUG]%s: charging current configuration: %dmA.\n", __func__, ret);
-	return ret;
+	if (data > 0x5)
+		data = 0x5;
+	return data * 50 + 150;
 }
 
 int eoc_current[16] =
@@ -304,28 +236,24 @@ static void s2mpw01_set_topoff_current(struct i2c_client *i2c, int current_limit
 {
 	int data;
 
-	current_limit *= 10;
-
-	if (current_limit < 100)
+	if (current_limit <= 5)
 		data = 0;
-	else if (current_limit >= 100 && current_limit < 125)
-		data = 1;
-	else if (current_limit >= 125 && current_limit < 150)
-		data = 2;
-	else if (current_limit >= 150 && current_limit < 175)
-		data = 3;
-	else if (current_limit >= 175 && current_limit < 200)
-		data = 5;
-	else if (current_limit >= 200 && current_limit < 250)
+	else if (current_limit > 5 && current_limit <= 10)
+		data = (current_limit - 5) / 5;
+	else if (current_limit > 10 && current_limit < 18)
+		data = (current_limit - 10) / 5 * 2 + 1;
+	else if (current_limit >= 18 && current_limit < 20)
+		data = 5;	  /* 17.5 mA */
+	else if (current_limit >= 20 && current_limit < 25)
 		data = 4;
-	else if (current_limit >= 250 && current_limit < 400)
-		data = (current_limit - 250) / 50 + 6;
-	else if (current_limit >= 400 && current_limit < 1000)
-		data = (current_limit - 400) / 100 + 9;
+	else if (current_limit >= 25 && current_limit <= 40)
+		data = (current_limit - 25) / 5 + 6;
+	else if (current_limit > 40 && current_limit <= 100)
+		data = (current_limit - 40) / 10 + 9;
 	else
 		data = 0x0F;
 
-	pr_info("[DEBUG]%s: top-off current	%d, data=0x%x\n", __func__, current_limit/10, data);
+	pr_err("[DEBUG]%s: top-off current	%d, data=0x%x\n", __func__, current_limit, data);
 
 	s2mpw01_update_reg(i2c, S2MPW01_CHG_REG_CTRL4, data << FIRST_TOPOFF_CURRENT_SHIFT,
 			FIRST_TOPOFF_CURRENT_MASK);
@@ -336,10 +264,9 @@ static void s2mpw01_set_charging_current(struct s2mpw01_charger_data *charger)
 {
 	int adj_current = 0;
 
-	pr_info("[DEBUG]%s: charger->siop_level  %d\n", __func__, charger->siop_level);
+	pr_err("[DEBUG]%s: charger->siop_level  %d\n", __func__, charger->siop_level);
 	adj_current = charger->charging_current * charger->siop_level / 100;
 	s2mpw01_set_fast_charging_current(charger->client, adj_current);
-	s2mpw01_test_read(charger->client);
 }
 
 enum {
@@ -378,8 +305,7 @@ static void s2mpw01_configure_charger(struct s2mpw01_charger_data *charger)
 		dev_err(dev, "%s() table is not exist\n", __func__);
 		return;
 	}
-	s2mpw01_topoff_interrupt_onoff(charger, 0);
-	s2mpw01_enable_charger_switch(charger, 0);
+
 #if ENABLE_MIVR
 	s2mpw01_set_mivr_level(charger);
 #endif /*DISABLE_MIVR*/
@@ -401,9 +327,6 @@ static void s2mpw01_configure_charger(struct s2mpw01_charger_data *charger)
 	s2mpw01_set_topoff_current(charger->client,
 			charger->pdata->charging_current_table
 			[charger->cable_type].full_check_current_1st);
-
-	s2mpw01_topoff_interrupt_onoff(charger, 1);
-
 }
 
 /* here is set init charger data */
@@ -430,11 +353,6 @@ static bool s2mpw01_chg_init(struct s2mpw01_charger_data *charger)
 #endif
 	/* TOP-OFF debounce time set 256us */
 	/* Disable (set 0min TOP OFF Timer) */
-	/* change Top-off detection debounce time (0x56 to 0x76) */
-	s2mpw01_write_reg(charger->client, 0x2C, 0x76);
-	/* recharge_option enable */
-	s2mpw01_update_reg(charger->client, S2MPW01_CHG_REG_CTRL3, 0x08, 0x08);
-
 	return true;
 }
 
@@ -443,16 +361,13 @@ static int s2mpw01_get_charging_status(struct s2mpw01_charger_data *charger)
 	int status = POWER_SUPPLY_STATUS_UNKNOWN;
 	int ret;
 	u8 chg_sts;
+	union power_supply_propval chg_mode;
 
 	ret = s2mpw01_read_reg(charger->client, S2MPW01_CHG_REG_STATUS1, &chg_sts);
+	psy_do_property("battery", get, POWER_SUPPLY_PROP_CHARGE_NOW, chg_mode);
+
 	if (ret < 0)
 		return status;
-	dev_info(charger->dev, "%s : charger status : 0x%x\n", __func__, chg_sts);
-
-	if (charger->full_charged) {
-			dev_info(charger->dev, "%s : POWER_SUPPLY_STATUS_FULL : 0x%x\n", __func__, chg_sts);
-			return POWER_SUPPLY_STATUS_FULL;
-	}
 
 	switch (chg_sts & 0x12) {
 	case 0x00:
@@ -461,6 +376,10 @@ static int s2mpw01_get_charging_status(struct s2mpw01_charger_data *charger)
 	case 0x10:	/*charge state */
 		status = POWER_SUPPLY_STATUS_CHARGING;
 		break;
+	case 0x02:	/* Done state */
+	case 0x04:	/* TOPoff state */
+		status = POWER_SUPPLY_STATUS_FULL;
+		break;
 	case 0x12:	/* Input is invalid */
 		status = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		break;
@@ -468,7 +387,6 @@ static int s2mpw01_get_charging_status(struct s2mpw01_charger_data *charger)
 		break;
 	}
 
-	s2mpw01_test_read(charger->client);
 	return status;
 }
 
@@ -484,16 +402,15 @@ static int s2mpw01_get_charge_type(struct i2c_client *iic)
 		return ret;
 	}
 
-	switch (data & ((1 << CHG_STATUS1_CHG_STS) || (1 << CHG_STATUS1_PRE_CHG))) {
-		case 1 << CHG_STATUS1_CHG_STS:
-			status = POWER_SUPPLY_CHARGE_TYPE_FAST;
-			break;
-		case 1 << CHG_STATUS1_PRE_CHG:
-			/* pre-charge mode */
-			status = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
-			break;
-		default:
-			break;
+	switch (data & (1 << CHG_STATUS1_CHG_STS)) {
+	case 0x10:
+		status = POWER_SUPPLY_CHARGE_TYPE_FAST;
+		break;
+	default:
+		/* 005 does not need to do this */
+		/* pre-charge mode */
+		status = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
+		break;
 	}
 
 	return status;
@@ -508,10 +425,7 @@ static bool s2mpw01_get_batt_present(struct i2c_client *iic)
 	if (ret < 0)
 		return false;
 
-	ret = (data & DET_BAT_STATUS_MASK) ? true : false;
-
-	pr_info("[DEBUG]%s: battery present: %s.\n", __func__, ret ? "YES" : "NO");
-	return ret;
+	return (data & DET_BAT_STATUS_MASK) ? true : false;
 }
 
 static int s2mpw01_get_charging_health(struct s2mpw01_charger_data *charger)
@@ -529,10 +443,7 @@ static int s2mpw01_get_charging_health(struct s2mpw01_charger_data *charger)
 		return POWER_SUPPLY_HEALTH_GOOD;
 	}
 
-	charger->unhealth_cnt++;
-	if (charger->unhealth_cnt < HEALTH_DEBOUNCE_CNT)
-		return POWER_SUPPLY_HEALTH_GOOD;
-
+	/* 005 need to check ovp & health count */
 	charger->unhealth_cnt = HEALTH_DEBOUNCE_CNT;
 	if (charger->ovp)
 		return POWER_SUPPLY_HEALTH_OVERVOLTAGE;
@@ -556,10 +467,9 @@ static int s2mpw01_chg_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
 		val->intval = s2mpw01_get_charging_health(charger);
-		s2mpw01_test_read(charger->client);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
-		val->intval = 400;
+		val->intval = 2000;
 		break;
 #if defined(CONFIG_ARCH_SWA100)
 	case POWER_SUPPLY_PROP_CURRENT_AVG:	/* charging current */
@@ -567,6 +477,11 @@ static int s2mpw01_chg_get_property(struct power_supply *psy,
 #endif
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		if (charger->charging_current) {
+			/*
+			aicr = s2mpw01_get_input_current_limit(charger->client);
+			chg_curr = s2mpw01_get_fast_charging_current(charger->client);
+			val->intval = MINVAL(aicr, chg_curr);
+			*/
 			val->intval = s2mpw01_get_fast_charging_current(charger->client);
 		} else
 			val->intval = 0;
@@ -634,8 +549,6 @@ static int s2mpw01_chg_set_property(struct power_supply *psy,
 
 			charger->is_charging = false;
 			charger->full_charged = false;
-
-			s2mpw01_topoff_interrupt_onoff(charger, 0);
 		} else if (charger->cable_type == POWER_SUPPLY_TYPE_OTG) {
 			dev_info(dev, "%s() OTG mode not supported\n", __func__);
 		} else {
@@ -645,10 +558,6 @@ static int s2mpw01_chg_set_property(struct power_supply *psy,
 			s2mpw01_configure_charger(charger);
 			charger->is_charging = true;
 		}
-#if EN_TEST_READ
-		msleep(100);
-		s2mpw01_test_read(charger->client);
-#endif
 		break;
 #if defined(CONFIG_ARCH_SWA100)
 	case POWER_SUPPLY_PROP_CURRENT_AVG:	/* charging current */
@@ -776,7 +685,7 @@ static int s2mpw01_battery_get_property(struct power_supply *psy,
 #endif
 	int ret = 0;
 
-	dev_dbg(&charger->client->dev, "%s: prop: %d\n", __func__, psp);
+	dev_dbg(&charger->client->dev, "prop: %d\n", psp);
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
@@ -1025,9 +934,6 @@ static int charger_handle_notification(struct notifier_block *nb,
 			psy_do_property(charger->pdata->charger_name, set,
 					POWER_SUPPLY_PROP_ONLINE,
 					value);
-			psy_do_property(charger->pdata->fuelgauge_name, set,
-					POWER_SUPPLY_PROP_ONLINE,
-					value);
 		} else {
 			pr_info("%s: Cable is Not Changed(%d)\n",
 				__func__, charger->battery_cable_type);
@@ -1063,7 +969,7 @@ static void sec_bat_get_battery_info(struct work_struct *work)
 
 	value.intval = SEC_BATTERY_VOLTAGE_OCV;
 	psy_do_property(charger->pdata->fuelgauge_name, get,
-		POWER_SUPPLY_PROP_VOLTAGE_OCV, value);
+		POWER_SUPPLY_PROP_VOLTAGE_AVG, value);
 	charger->voltage_ocv = value.intval;
 
 	/* To get SOC value (NOT raw SOC), need to reset value */
@@ -1079,13 +985,13 @@ static void sec_bat_get_battery_info(struct work_struct *work)
 
 	if (!charger->battery_valid) {
 		if (!s2mpw01_read_reg(charger->client, S2MPW01_CHG_REG_STATUS2, &ret))
-			charger->battery_valid = (ret & DET_BAT_STATUS_MASK) ? true : false;
+			charger->battery_valid = (ret & DET_BAT_STATUS_MASK) ? false : true;
 	}
 
 	s2mpw01_test_read(charger->client);
 
 	power_supply_changed(&charger->psy_battery);
-	schedule_delayed_work(&charger->polling_work, msecs_to_jiffies(60000));
+	schedule_delayed_work(&charger->polling_work, HZ * 10);
 #endif
 
 #if defined(CONFIG_MUIC_NOTIFIER)
@@ -1106,7 +1012,6 @@ static irqreturn_t s2mpw01_det_bat_isr(int irq, void *data)
 
 	s2mpw01_read_reg(charger->client, S2MPW01_CHG_REG_STATUS2, &val);
 	if ((val & DET_BAT_STATUS_MASK) == 0) {
-		s2mpw01_topoff_interrupt_onoff(charger, 0);
 		s2mpw01_enable_charger_switch(charger, 0);
 		pr_err("charger-off if battery removed\n");
 	}
@@ -1119,16 +1024,9 @@ static irqreturn_t s2mpw01_chg_isr(int irq, void *data)
 
 	s2mpw01_read_reg(charger->client, S2MPW01_CHG_REG_STATUS1, &val);
 	pr_err("[DEBUG] %s , %02x\n " , __func__, val);
-	if ((val & (1 << CHG_STATUS1_TOP_OFF)) && (val & (1 << CHG_STATUS1_CHG_STS))) {
-		charger->full_charged = true;
+	if (val & (1 << CHG_STATUS1_TOP_OFF))
 		pr_err("add self chg done\n");
-		s2mpw01_topoff_interrupt_onoff(charger, 0);
-	} else if (val & (1 << CHG_STATUS1_RE_CHG)) {
-		pr_err("recharge start\n");
-		s2mpw01_topoff_interrupt_onoff(charger, 1);
-	}
 
-	s2mpw01_test_read(charger->client);
 	return IRQ_HANDLED;
 }
 
@@ -1216,7 +1114,6 @@ static int s2mpw01_charger_probe(struct platform_device *pdev)
 
 	charger->dev = &pdev->dev;
 	charger->client = s2mpw01->charger;
-	charger->iodev=s2mpw01;
 
 	charger->pdata = devm_kzalloc(&pdev->dev, sizeof(*(charger->pdata)),
 			GFP_KERNEL);
@@ -1243,7 +1140,7 @@ static int s2mpw01_charger_probe(struct platform_device *pdev)
 
 #ifdef CONFIG_SEC_FUELGAUGE_S2MPW01
 	if (charger->pdata->fuelgauge_name == NULL)
-		charger->pdata->fuelgauge_name = "s2mpw01-fuelgauge";
+		charger->pdata->fuelgauge_name = "sec-fuelgauge";
 #endif
 	charger->psy_battery.name = "s2mpw01-battery";
 	charger->psy_battery.type = POWER_SUPPLY_TYPE_BATTERY;
@@ -1316,7 +1213,6 @@ static int s2mpw01_charger_probe(struct platform_device *pdev)
 	 * irq request
 	 * if you need to add irq , please refer below code.
 	 */
-	//charger->iodev->topoff_mask_status = 1;
 	charger->irq_det_bat = pdata->irq_base + S2MPW01_CHG_IRQ_BATDET_INT2;
 	ret = request_threaded_irq(charger->irq_det_bat, NULL,
 			s2mpw01_det_bat_isr, 0 , "det-bat-in-irq", charger);
@@ -1327,112 +1223,13 @@ static int s2mpw01_charger_probe(struct platform_device *pdev)
 	}
 	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_TOPOFF_INT1;
 	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "topoff-irq", charger);
+			s2mpw01_chg_isr, 0 , "chg-irq", charger);
 	if (ret < 0) {
 		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
 					__func__, charger->irq_chg, ret);
 		goto err_reg_irq;
 	}
-/*	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_CHGSTS_INT1;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	} */
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_RECHG_INT1;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-/*	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_CHGDONE_INT1;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_PREECHG_INT1;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_CIN2BAT_INT1;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_CHGVINOVP_INT1;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_CHGVIN_INT1;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_ADPATH_INT2;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_FCHG_INT2;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_CVOK_INT3;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_TMROUT_INT3;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}
-	charger->irq_chg = pdata->irq_base + S2MPW01_CHG_IRQ_CHGTSDINT3;
-	ret = request_threaded_irq(charger->irq_chg, NULL,
-			s2mpw01_chg_isr, 0 , "charging-irq", charger);
-	if (ret < 0) {
-		dev_err(s2mpw01->dev, "%s: Fail to request charger irq in IRQ: %d: %d\n",
-					__func__, charger->irq_chg, ret);
-		goto err_reg_irq;
-	}*/
 	s2mpw01_test_read(charger->client);
-
-	/* initially TOP-OFF interrupt masking */
-	s2mpw01_topoff_interrupt_onoff(charger, 0);
 
 	charger->battery_cable_type = POWER_SUPPLY_TYPE_BATTERY;
 	charger->cable_type = POWER_SUPPLY_TYPE_BATTERY;
@@ -1449,7 +1246,7 @@ static int s2mpw01_charger_probe(struct platform_device *pdev)
 #if defined(CONFIG_SEC_FUELGAUGE_S2MPW01) || defined(CONFIG_MUIC_NOTIFIER)
 	INIT_DELAYED_WORK(&charger->polling_work,
 				sec_bat_get_battery_info);
-	schedule_delayed_work(&charger->polling_work, msecs_to_jiffies(60000));
+	schedule_delayed_work(&charger->polling_work, HZ * 5);
 #endif
 
 	pr_info("%s:[BATT] S2MPW01 charger driver loaded OK\n", __func__);

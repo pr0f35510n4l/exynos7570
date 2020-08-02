@@ -383,9 +383,9 @@ int sensor_dw9714_actuator_probe(struct i2c_client *client,
 	probe_info("%s sensor_id %d\n", __func__, sensor_id);
 
 	device = &core->sensor[sensor_id];
-	if (!device) {
-		err("sensor device is NULL");
-		ret = -ENOMEM;
+	if (!test_bit(FIMC_IS_SENSOR_PROBE, &device->state)) {
+		err("sensor device is not yet probed");
+		ret = -EPROBE_DEFER;
 		goto p_err;
 	}
 
@@ -449,6 +449,7 @@ MODULE_DEVICE_TABLE(of, exynos_fimc_is_dw9714_match);
 
 static const struct i2c_device_id actuator_dw9714_idt[] = {
 	{ ACTUATOR_NAME, 0 },
+	{},
 };
 
 static struct i2c_driver actuator_dw9714_driver = {

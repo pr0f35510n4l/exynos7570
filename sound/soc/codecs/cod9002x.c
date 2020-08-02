@@ -32,6 +32,7 @@
 #include <linux/input.h>
 #include <linux/completion.h>
 
+#include <linux/mfd/samsung/s2mpu06-private.h>
 #include <sound/exynos-audmixer.h>
 #include <sound/cod9002x.h>
 #include "cod9002x.h"
@@ -56,6 +57,40 @@
 #define dev_dbg dev_err
 #endif
 
+#define COD9002X_RATES		SNDRV_PCM_RATE_8000_192000
+
+#define COD9002X_FORMATS	(SNDRV_PCM_FMTBIT_S16_LE |		\
+		SNDRV_PCM_FMTBIT_S20_3LE |	\
+		SNDRV_PCM_FMTBIT_S24_LE |	\
+		SNDRV_PCM_FMTBIT_S32_LE)
+
+#define COD9002X_NO_DET_WATER 0
+#define COD9002X_DET_WATER 1
+#define COD9002X_DET_WATER_JACK_IN 2
+#define COD9002X_WATER_DET_THRESHOLD_MAX 2053
+#define COD9002X_WATER_DET_THRESHOLD_MIN_FIRST 100
+#define COD9002X_WATER_DET_THRESHOLD_MIN 30
+#define COD9002X_WATER_DET_POLLING_TIME 1000
+
+#define JACK_IN_CHK_MORE_NO 3
+#define WATER_FINISH_CHK_MORE_NO 3
+#define WRONG_JACK_IN_CHK_NO 3
+
+#define ADC_TRACE_NUM 5
+#define ADC_TRACE_NUM2 2
+#define ADC_READ_DELAY_US 500
+#define ADC_READ_DELAY_MS 1
+#define ADC_DEVI_THRESHOLD 18000
+
+#define BUTTON_PRESS 1
+#define BUTTON_RELEASE 0
+
+/**
+ * Helper functions to read ADC value for button detection
+ */
+
+#define COD9002X_ADC_SAMPLE_SIZE	5
+
 /* Forward Declarations */
 static void cod9002x_save_otp_registers(struct snd_soc_codec *codec);
 static void cod9002x_restore_otp_registers(struct snd_soc_codec *codec);
@@ -68,12 +103,6 @@ static inline void cod9002x_usleep(unsigned int u_sec)
 {
 	usleep_range(u_sec, u_sec + 10);
 }
-
-/**
- * Helper functions to read ADC value for button detection
- */
-
-#define COD9002X_ADC_SAMPLE_SIZE	5
 
 static void cod9002x_adc_start(struct cod9002x_priv *cod9002x)
 {
@@ -134,10 +163,10 @@ static bool cod9002x_volatile_register(struct device *dev, unsigned int reg)
 	 * than the IRQ pending and IRQ status registers.
 	 */
 	switch (reg) {
-	case COD9002X_01_IRQ1PEND ... COD9002X_05_IRQ5PEND:
-	case COD9002X_0B_STATUS1 ... COD9002X_0D_STATUS3:
-	case COD9002X_61_RESERVED ... COD9002X_62_IRQ_R:
-	case COD9002X_80_DET_PDB ... 0x97:
+	case COD9002X_01_IRQ1PEND ... COD9002X_03_IRQ3PEND:
+	case COD9002X_07_STATUS1 ... COD9002X_08_STATUS2:
+	case COD9002X_61_RESERVED ... COD9002X_62_STATUS3:
+	case COD9002X_80_DET_PDB ... COD9002X_97_SEL_RES2:
 		return true;
 	default:
 		return false;
@@ -152,15 +181,15 @@ static bool cod9002x_volatile_register(struct device *dev, unsigned int reg)
 static bool cod9002x_readable_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case COD9002X_01_IRQ1PEND ... COD9002X_0D_STATUS3:
+	case COD9002X_01_IRQ1PEND ... COD9002X_08_STATUS2:
 	case COD9002X_10_PD_REF ... COD9002X_1C_SV_DA:
 	case COD9002X_20_VOL_AD1 ... COD9002X_26_DSM_ADS:
 	case COD9002X_30_VOL_HPL ... COD9002X_39_VOL_SPK:
-	case COD9002X_40_DIGITAL_POWER ... COD9002X_44_ADC_R_VOL:
+	case COD9002X_40_DIGITAL_POWER ... COD9002X_45_DMIX_AD:
 	case COD9002X_50_DAC1 ... COD9002X_5F_SPKLIMIT3:
-	case COD9002X_60_OFFSET1 ... COD9002X_62_IRQ_R:
+	case COD9002X_60_OFFSET1 ... COD9002X_62_STATUS3:
 	case COD9002X_70_CLK1_AD ... COD9002X_7A_SL_DA2:
-	case COD9002X_80_DET_PDB ... 0x97:
+	case COD9002X_80_DET_PDB ... COD9002X_97_SEL_RES2:
 	case COD9002X_D0_CTRL_IREF1 ... COD9002X_DE_CTRL_SPKS2:
 		return true;
 	default:
@@ -171,17 +200,17 @@ static bool cod9002x_readable_register(struct device *dev, unsigned int reg)
 static bool cod9002x_writeable_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	/* Reg-0x09 to Reg-0x0B are read-only status registers */
-	case COD9002X_01_IRQ1PEND ... COD9002X_0A_IRQ5M:
+	/* Reg-0x07 to Reg-0x08 are read-only status registers */
+	case COD9002X_01_IRQ1PEND ... COD9002X_06_IRQ3M:
 	case COD9002X_10_PD_REF ... COD9002X_1C_SV_DA:
 	case COD9002X_20_VOL_AD1 ... COD9002X_26_DSM_ADS:
 	case COD9002X_30_VOL_HPL ... COD9002X_39_VOL_SPK:
-	case COD9002X_40_DIGITAL_POWER ... COD9002X_44_ADC_R_VOL:
+	case COD9002X_40_DIGITAL_POWER ... COD9002X_45_DMIX_AD:
 	case COD9002X_50_DAC1 ... COD9002X_5F_SPKLIMIT3:
 	/* Reg-0x61 is reserved, Reg-0x62 is read-only */
 	case COD9002X_60_OFFSET1:
 	case COD9002X_70_CLK1_AD ... COD9002X_7A_SL_DA2:
-	case COD9002X_80_DET_PDB ... 0x97:
+	case COD9002X_80_DET_PDB ... COD9002X_97_SEL_RES2:
 	case COD9002X_D0_CTRL_IREF1 ... COD9002X_DE_CTRL_SPKS2:
 		return true;
 	default:
@@ -363,30 +392,67 @@ static const DECLARE_TLV_DB_SCALE(cod9002x_dnc_lvl_tlv, -1050, 0, 0);
  *
  * Selecting the Mode of Mono Mixer (inside DAC block)
  */
-static const char *cod9002x_mono_mix_mode_text[] = {
+static const char * const cod9002x_mono_mix_mode_text[] = {
 	"Disable", "R", "L", "LR-Invert",
 	"(L+R)/2", "L+R"
 };
 
 static const struct soc_enum cod9002x_mono_mix_mode_enum =
 	SOC_ENUM_SINGLE(COD9002X_50_DAC1, DAC1_MONOMIX_SHIFT,
-			ARRAY_SIZE(cod9002x_mono_mix_mode_text),
-			cod9002x_mono_mix_mode_text);
+		ARRAY_SIZE(cod9002x_mono_mix_mode_text),
+		cod9002x_mono_mix_mode_text);
+
 
 /**
- * chargepump_mode
+ * dnc_hp_vol_enable
  *
- * Selecting the chargepump mode
+ * Enable / Disable dnc hp vol
  */
-static const char *cod9002x_chargepump_mode_text[] = {
-	"VDD", "HALF-VDD", "CLASS-G-D", "CLASS-G-A"
-};
+static const char * const cod9002x_dnc_hp_vol_enable_text[] = {"Off", "On"};
 
-static const struct soc_enum cod9002x_chargepump_mode_enum =
-	SOC_ENUM_SINGLE(COD9002X_33_CTRL_EP, CTMV_CP_MODE_SHIFT,
-			ARRAY_SIZE(cod9002x_chargepump_mode_text),
-			cod9002x_chargepump_mode_text);
+static const struct soc_enum cod9002x_dnc_hp_vol_enable_enum =
+	SOC_ENUM_SINGLE(COD9002X_56_DNC3, DNC_HP_VOL_EN_SHIFT,
+		ARRAY_SIZE(cod9002x_dnc_hp_vol_enable_text),
+		cod9002x_dnc_hp_vol_enable_text);
 
+
+static int dac_soft_mute_get(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	return 0;
+}
+
+/**
+  * dnc_zcd_enable
+  *
+  * Enable / Disable dnc zcd
+  */
+static const char * const cod9002x_dnc_zcd_enable_text[] = {"Off", "On"};
+
+static const struct soc_enum cod9002x_dnc_zcd_enable_enum =
+	SOC_ENUM_SINGLE(COD9002X_5C_DNC9, DNC_ZCD_EN_SHIFT,
+			ARRAY_SIZE(cod9002x_dnc_zcd_enable_text),
+			cod9002x_dnc_zcd_enable_text);
+
+static int dac_soft_mute_put(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	int value = ucontrol->value.integer.value[0];
+
+	if (!value)
+		/* enable soft mute */
+		snd_soc_update_bits(codec, COD9002X_50_DAC1,
+				DAC1_SOFT_MUTE_MASK, DAC1_SOFT_MUTE_MASK);
+	else
+		/* diable soft mute */
+		snd_soc_update_bits(codec, COD9002X_50_DAC1,
+				DAC1_SOFT_MUTE_MASK, 0x0);
+
+	dev_info(codec->dev, "%s: soft mute : %s\n", __func__,
+			(!value) ? "on":"off");
+	return 0;
+}
 
 /**
  * struct snd_kcontrol_new cod9002x_snd_control
@@ -453,7 +519,7 @@ static const struct snd_kcontrol_new cod9002x_snd_controls[] = {
 
 	SOC_SINGLE_TLV("Speaker Volume", COD9002X_39_VOL_SPK,
 			CTVOL_SPK_PGA_SHIFT,
-			(BIT(CTVOL_SPK_PGA_WIDTH) - 1), 1,
+			(BIT(CTVOL_SPK_PGA_WIDTH) - 8), 1,
 			cod9002x_ctvol_spk_pga_tlv),
 
 	SOC_SINGLE_TLV("ADC Left Gain", COD9002X_43_ADC_L_VOL,
@@ -478,41 +544,54 @@ static const struct snd_kcontrol_new cod9002x_snd_controls[] = {
 			(BIT(DNC_MAX_GAIN_WIDTH) - 2), 0,
 			cod9002x_dnc_max_gain_tlv),
 
-	SOC_DOUBLE_R_TLV("DNC Level", COD9002X_56_DNC3,
-			DNC_LVL_L_SHIFT, DNC_LVL_R_SHIFT,
+	SOC_SINGLE_TLV("DNC Level Left", COD9002X_56_DNC3,
+			DNC_LVL_L_SHIFT,
 			(BIT(DNC_LVL_L_WIDTH) - 1), 0, cod9002x_dnc_lvl_tlv),
+
+	SOC_SINGLE_TLV("DNC Level Right", COD9002X_56_DNC3,
+			DNC_LVL_R_SHIFT,
+			(BIT(DNC_LVL_R_WIDTH) - 1), 0, cod9002x_dnc_lvl_tlv),
+
+	SOC_SINGLE("DNC ZCD Timeout", COD9002X_5C_DNC9,
+			DNC_ZCD_TIMEOUT_SHIFT, DNC_ZCD_TIMEOUT_MASK, 0),
+
+	SOC_ENUM("DNC ZCD Enable", cod9002x_dnc_zcd_enable_enum),
 
 	SOC_ENUM("MonoMix Mode", cod9002x_mono_mix_mode_enum),
 
-	SOC_ENUM("Chargepump Mode", cod9002x_chargepump_mode_enum),
+	SOC_SINGLE_EXT("DAC Soft Mute", SND_SOC_NOPM, 0, 100, 0,
+			dac_soft_mute_get, dac_soft_mute_put),
+
+	SOC_ENUM("DNC HP VOL Enable", cod9002x_dnc_hp_vol_enable_enum),
 };
 
 static int dac_ev(struct snd_soc_dapm_widget *w, struct snd_kcontrol *kcontrol,
 		int event)
 {
-	dev_dbg(w->codec->dev, "%s called\n", __func__);
+	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		/* Default value of DIGITAL BLOCK */
-		snd_soc_write(w->codec, COD9002X_40_DIGITAL_POWER, 0xf9);
-
 		/* DAC digital power On */
 		snd_soc_update_bits(w->codec, COD9002X_40_DIGITAL_POWER,
-				PDB_DACDIG_MASK | RSTB_OVFW_DA_MASK,
-				PDB_DACDIG_MASK);
+				PDB_DACDIG_MASK, PDB_DACDIG_MASK);
 
+		/* DAC digital Reset On/Off */
 		snd_soc_update_bits(w->codec, COD9002X_40_DIGITAL_POWER,
 				RSTB_DAT_DA_MASK, 0x0);
 
 		snd_soc_update_bits(w->codec, COD9002X_40_DIGITAL_POWER,
 				RSTB_DAT_DA_MASK, RSTB_DAT_DA_MASK);
-
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-		/* Default value of DIGITAL BLOCK during power off */
-		snd_soc_write(w->codec, COD9002X_40_DIGITAL_POWER, 0xe9);
+		/* DAC digital Reset Off */
+		snd_soc_update_bits(w->codec, COD9002X_40_DIGITAL_POWER,
+				RSTB_DAT_DA_MASK, 0x0);
+
+		/* DAC digital power Off */
+		snd_soc_update_bits(w->codec, COD9002X_40_DIGITAL_POWER,
+				PDB_DACDIG_MASK, 0x0);
 		break;
 
 	default:
@@ -540,19 +619,19 @@ static int cod9002x_capture_init_manual_mode(struct snd_soc_codec *codec)
 			PDB_VMID_MASK, PDB_VMID_MASK);
 
 	snd_soc_update_bits(codec, COD9002X_18_CTRL_REF,
-					CTMF_VMID_MASK,
-					CTMF_VMID_5K_OM << CTMF_VMID_SHIFT);
+			CTMF_VMID_MASK,
+			CTMF_VMID_1K_OM << CTMF_VMID_SHIFT);
 
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK,
 			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK);
 
-	snd_soc_update_bits(codec, COD9002X_18_CTRL_REF,
-					CTMF_VMID_MASK,
-					CTMF_VMID_50K_OM << CTMF_VMID_SHIFT);
+	msleep(30);
 
 	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
 			PDB_IGEN_MASK, PDB_IGEN_MASK);
+
+	cod9002x_usleep(100);
 
 	return 0;
 }
@@ -564,10 +643,9 @@ static int cod9002x_capture_init(struct snd_soc_codec *codec)
 	/* enable ADC digital mute before configuring ADC */
 	cod9002x_adc_digital_mute(codec, true);
 
-	/* Recording Digital  Power on */
+	/* Recording Digital Power on */
 	snd_soc_update_bits(codec, COD9002X_40_DIGITAL_POWER,
-			PDB_ADCDIG_MASK | RSTB_OVFW_DA_MASK,
-			PDB_ADCDIG_MASK);
+			PDB_ADCDIG_MASK, PDB_ADCDIG_MASK);
 
 	/* Recording Digital Reset on/off */
 	snd_soc_update_bits(codec, COD9002X_40_DIGITAL_POWER,
@@ -582,33 +660,29 @@ static int cod9002x_capture_init(struct snd_soc_codec *codec)
 
 static void cod9002x_capture_deinit_manual_mode(struct snd_soc_codec *codec)
 {
-        snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                        PDB_IGEN_MASK, 0);
+	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
+			PDB_IGEN_MASK, 0);
 
-        snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                        PDB_VMID_MASK, 0);
+	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
+			PDB_VMID_MASK, 0);
 }
 
 static int cod9002x_capture_deinit(struct snd_soc_codec *codec)
 {
-        int dac_on;
+	dev_dbg(codec->dev, "%s called\n", __func__);
 
-        dac_on = snd_soc_read(codec, COD9002X_40_DIGITAL_POWER);
+	cod9002x_capture_deinit_manual_mode(codec);
 
-        cod9002x_capture_deinit_manual_mode(codec);
+	/* Recording Digital Reset on */
+	snd_soc_update_bits(codec, COD9002X_40_DIGITAL_POWER,
+			RSTB_DAT_AD_MASK, 0x0);
 
-	if (PDB_DACDIG_MASK & dac_on)
-                snd_soc_update_bits(codec,
-                                COD9002X_40_DIGITAL_POWER,
-                                RSTB_DAT_AD_MASK, 0x0);
-        else
-                snd_soc_update_bits(codec,
-                                COD9002X_40_DIGITAL_POWER,
-                                RSTB_DAT_AD_MASK | RSTB_OVFW_DA_MASK,
-                                RSTB_OVFW_DA_MASK);
+	/* Recording Digital Power off */
+	snd_soc_update_bits(codec, COD9002X_40_DIGITAL_POWER,
+			PDB_ADCDIG_MASK, 0x0);
 
 	/* disable ADC digital mute after configuring ADC */
-        cod9002x_adc_digital_mute(codec, false);
+	cod9002x_adc_digital_mute(codec, false);
 
 	return 0;
 }
@@ -622,9 +696,6 @@ static int adc_ev(struct snd_soc_dapm_widget *w, struct snd_kcontrol *kcontrol,
 
 	dac_on = snd_soc_read(w->codec, COD9002X_40_DIGITAL_POWER);
 	switch (event) {
-	case SND_SOC_DAPM_PRE_PMU:
-		break;
-
 	case SND_SOC_DAPM_POST_PMU:
 		/* disable ADC digital mute after configuring ADC */
 		cod9002x_adc_digital_mute(w->codec, false);
@@ -642,7 +713,78 @@ static int adc_ev(struct snd_soc_dapm_widget *w, struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+int cod9002x_mic_bias_ev(struct snd_soc_codec *codec, int mic_bias, int event)
+{
+	int is_other_mic_on, mask;
 
+	dev_dbg(codec->dev, "%s Called, Mic bias = %d, Event = %d\n",
+				__func__, mic_bias, event);
+
+	is_other_mic_on = snd_soc_read(codec, COD9002X_10_PD_REF);
+
+	if (mic_bias == COD9002X_MICBIAS1) {
+		is_other_mic_on &= PDB_MCB2_MASK;
+		mask = is_other_mic_on ? PDB_MCB1_MASK :
+			PDB_MCB1_MASK | PDB_MCB_LDO_CODEC_MASK;
+	} else if (mic_bias == COD9002X_MICBIAS2) {
+		is_other_mic_on &= PDB_MCB1_MASK;
+		mask = is_other_mic_on ? PDB_MCB2_MASK :
+			PDB_MCB2_MASK | PDB_MCB_LDO_CODEC_MASK;
+	} else {
+		dev_err(codec->dev, "%s Called , Invalid MIC ID\n",
+							__func__);
+		return -1;
+	}
+
+	switch (event) {
+	case SND_SOC_DAPM_PRE_PMU:
+		snd_soc_update_bits(codec, COD9002X_10_PD_REF, mask, mask);
+		if (mic_bias == COD9002X_MICBIAS2)
+			snd_soc_update_bits(codec, COD9002X_18_CTRL_REF,
+					CTRM_MCB2_MASK, CTRM_MCB2_MASK);
+		break;
+	case SND_SOC_DAPM_POST_PMD:
+		snd_soc_update_bits(codec, COD9002X_10_PD_REF, mask, 0x00);
+		if (mic_bias == COD9002X_MICBIAS2)
+			snd_soc_update_bits(codec, COD9002X_18_CTRL_REF,
+					CTRM_MCB2_MASK, 0);
+		break;
+	}
+
+	return 0;
+}
+
+/**
+  * Mute mic if it is active
+  *
+  * Returns -1 if error, else 0
+  */
+static int cod9002x_mute_mic(struct snd_soc_codec *codec, bool on)
+{
+	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
+	dev_dbg(codec->dev, "%s called, %s\n", __func__,
+			on ? "Mute" : "Unmute");
+
+	if (on) {
+		cod9002x_adc_digital_mute(codec, true);
+		snd_soc_update_bits(cod9002x->codec, COD9002X_12_PD_AD2,
+				PDB_MIC_BST3_MASK, 0);
+	} else {
+		snd_soc_update_bits(cod9002x->codec, COD9002X_12_PD_AD2,
+				PDB_MIC_BST3_MASK, PDB_MIC_BST3_MASK);
+		cod9002x_adc_digital_mute(codec, false);
+	}
+
+	return 0;
+}
+
+/* process the button events based on the need */
+void cod9002x_process_button_ev(struct snd_soc_codec *codec, int code, int on)
+{
+	bool key_press = on ? true : false;
+
+	cod9002x_mute_mic(codec, key_press);
+}
 
 static int cod9002_power_on_mic1(struct snd_soc_codec *codec)
 {
@@ -657,96 +799,77 @@ static int cod9002_power_on_mic1(struct snd_soc_codec *codec)
 	if (!mix_val)
 		mix_val = EN_MIX_MIC1L_MASK | EN_MIX_MIC1R_MASK;
 
-	/* mic bias1 on */
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-			PDB_MCB1_MASK | PDB_MCB_LDO_CODEC_MASK,
-			PDB_MCB1_MASK | PDB_MCB_LDO_CODEC_MASK);
-
 	/* Reset the mixer-switches before powering on */
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
 			EN_MIX_MIC1L_MASK | EN_MIX_MIC1R_MASK, 0x0);
 
-	cod9002x_usleep(100);
-
 	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, PDB_IGEN_AD_MASK);
-
-	cod9002x_usleep(100);
+			PDB_IGEN_AD_MASK, PDB_IGEN_AD_MASK);
 
 	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
 			PDB_MIC_PGA1_MASK | PDB_MIC_BST1_MASK ,
-			PDB_MIC_PGA1_MASK | PDB_MIC_BST1_MASK );
-
-	cod9002x_usleep(100);
+			PDB_MIC_PGA1_MASK | PDB_MIC_BST1_MASK);
 
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			PDB_MIXL_MASK | PDB_MIXR_MASK ,
-			PDB_MIXL_MASK | PDB_MIXR_MASK );
+			PDB_MIXL_MASK | PDB_MIXR_MASK);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			PDB_DSML_MASK | PDB_DSMR_MASK ,
-			PDB_DSML_MASK | PDB_DSMR_MASK );
+			PDB_DSML_MASK | PDB_DSMR_MASK);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
 			EN_MIX_MIC1L_MASK | EN_MIX_MIC1R_MASK, mix_val);
 
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK, 0);
+			EN_DSML_PREQ_MASK | EN_DSMR_PREQ_MASK, 0x0);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			RESETB_DSML_MASK | RESETB_DSMR_MASK,
 			RESETB_DSML_MASK | RESETB_DSMR_MASK);
 
-	cod9002x_usleep(100);
+	msleep(140);
+
+	snd_soc_update_bits(codec, COD9002X_18_CTRL_REF,
+			CTMF_VMID_MASK,
+			CTMF_VMID_60K_OM << CTMF_VMID_SHIFT);
 
 	return 0;
 }
 
 static int cod9002_power_off_mic1(struct snd_soc_codec *codec)
 {
+	int other_mic;
+
 	dev_dbg(codec->dev, "%s called\n", __func__);
 
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK);
+	other_mic = snd_soc_read(codec, COD9002X_78_MIC_ON);
+	other_mic &= (EN_MIC2_MASK | EN_MIC3_MASK | EN_LN_MASK);
 
-	cod9002x_usleep(100);
+	if (!other_mic)
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				RESETB_DSML_MASK | RESETB_DSMR_MASK, 0x0);
 
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
-			EN_MIX_MIC1L_MASK | EN_MIX_MIC1R_MASK, 0);
+			EN_MIX_MIC1L_MASK | EN_MIX_MIC1R_MASK, 0x0);
 
-	cod9002x_usleep(100);
+	if (!other_mic) {
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				PDB_DSML_MASK | PDB_DSMR_MASK, 0x0);
 
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_DSML_MASK | PDB_DSMR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_MIXL_MASK | PDB_MIXR_MASK, 0);
-
-	cod9002x_usleep(100);
-
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				PDB_MIXL_MASK | PDB_MIXR_MASK, 0x0);
+	}
 	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
-			PDB_MIC_PGA1_MASK | PDB_MIC_BST1_MASK, 0);
+			PDB_MIC_PGA1_MASK | PDB_MIC_BST1_MASK, 0x0);
 
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	/* mic bias1 off */
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-			PDB_MCB1_MASK | PDB_MCB_LDO_CODEC_MASK,
-			0);
+	if (!other_mic)
+		snd_soc_update_bits(codec, COD9002X_10_PD_REF,
+				PDB_IGEN_AD_MASK, 0x0);
 
 	return 0;
 }
+
 static int cod9002_power_on_mic2(struct snd_soc_codec *codec)
 {
 	unsigned int mix_val;
@@ -760,51 +883,40 @@ static int cod9002_power_on_mic2(struct snd_soc_codec *codec)
 	if (!mix_val)
 		mix_val = EN_MIX_MIC2L_MASK | EN_MIX_MIC2R_MASK;
 
-
-	/* mic bias1 On */
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-			PDB_MCB1_MASK | PDB_MCB_LDO_CODEC_MASK,
-			PDB_MCB1_MASK | PDB_MCB_LDO_CODEC_MASK);
-
 	/* Reset the mixer-switches before powering on */
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
 			EN_MIX_MIC2L_MASK | EN_MIX_MIC2R_MASK, 0x0);
 
-	cod9002x_usleep(100);
-
 	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, PDB_IGEN_AD_MASK);
-
-	cod9002x_usleep(100);
+			PDB_IGEN_AD_MASK, PDB_IGEN_AD_MASK);
 
 	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
 			PDB_MIC_PGA2_MASK | PDB_MIC_BST2_MASK ,
-			PDB_MIC_PGA2_MASK | PDB_MIC_BST2_MASK );
-
-	cod9002x_usleep(100);
+			PDB_MIC_PGA2_MASK | PDB_MIC_BST2_MASK);
 
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			PDB_MIXL_MASK | PDB_MIXR_MASK ,
-			PDB_MIXL_MASK | PDB_MIXR_MASK );
+			PDB_MIXL_MASK | PDB_MIXR_MASK);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			PDB_DSML_MASK | PDB_DSMR_MASK ,
-			PDB_DSML_MASK | PDB_DSMR_MASK );
+			PDB_DSML_MASK | PDB_DSMR_MASK);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
 			EN_MIX_MIC2L_MASK | EN_MIX_MIC2R_MASK, mix_val);
 
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK, 0);
+			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK, 0x0);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			RESETB_DSML_MASK | RESETB_DSMR_MASK,
 			RESETB_DSML_MASK | RESETB_DSMR_MASK);
 
-	cod9002x_usleep(100);
+	msleep(140);
+
+	snd_soc_update_bits(codec, COD9002X_18_CTRL_REF,
+			CTMF_VMID_MASK,
+			CTMF_VMID_60K_OM << CTMF_VMID_SHIFT);
 
 	return 0;
 }
@@ -813,43 +925,33 @@ static int cod9002_power_on_mic2(struct snd_soc_codec *codec)
 
 static int cod9002_power_off_mic2(struct snd_soc_codec *codec)
 {
+	int other_mic;
+
 	dev_dbg(codec->dev, "%s called\n", __func__);
 
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK);
+	other_mic = snd_soc_read(codec, COD9002X_78_MIC_ON);
+	other_mic &= (EN_MIC1_MASK | EN_MIC3_MASK | EN_LN_MASK);
 
-	cod9002x_usleep(100);
+	if (!other_mic)
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				RESETB_DSML_MASK | RESETB_DSMR_MASK, 0x0);
 
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
-			EN_MIX_MIC2L_MASK | EN_MIX_MIC2R_MASK, 0);
+			EN_MIX_MIC2L_MASK | EN_MIX_MIC2R_MASK, 0x0);
 
-	cod9002x_usleep(100);
+	if (!other_mic) {
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				PDB_DSML_MASK | PDB_DSMR_MASK, 0x0);
 
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_DSML_MASK | PDB_DSMR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_MIXL_MASK | PDB_MIXR_MASK, 0);
-
-	cod9002x_usleep(100);
-
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				PDB_MIXL_MASK | PDB_MIXR_MASK, 0x0);
+	}
 	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
-			PDB_MIC_PGA2_MASK | PDB_MIC_BST2_MASK, 0);
+			PDB_MIC_PGA2_MASK | PDB_MIC_BST2_MASK, 0x0);
 
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	/* mic bias1 Off */
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-			PDB_MCB1_MASK | PDB_MCB_LDO_CODEC_MASK,
-			0);
+	if (!other_mic)
+		snd_soc_update_bits(codec, COD9002X_10_PD_REF,
+				PDB_IGEN_AD_MASK, 0x0);
 
 	return 0;
 }
@@ -867,188 +969,73 @@ static int cod9002_power_on_mic3(struct snd_soc_codec *codec)
 	if (!mix_val)
 		mix_val = EN_MIX_MIC3L_MASK | EN_MIX_MIC3R_MASK;
 
-	/* should be remove */
-	snd_soc_write(codec, 0x81, 0x03);
-
-	/* mic bias2 on */
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-			PDB_MCB2_MASK | PDB_MCB_LDO_CODEC_MASK,
-			PDB_MCB2_MASK | PDB_MCB_LDO_CODEC_MASK);
-
 	/* Reset the mixer-switches before powering on */
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
 			EN_MIX_MIC3L_MASK | EN_MIX_MIC3R_MASK, 0x0);
 
-	cod9002x_usleep(100);
-
 	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, PDB_IGEN_AD_MASK);
-
-	cod9002x_usleep(100);
+			PDB_IGEN_AD_MASK, PDB_IGEN_AD_MASK);
 
 	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
 			PDB_MIC_PGA3_MASK | PDB_MIC_BST3_MASK ,
-			PDB_MIC_PGA3_MASK | PDB_MIC_BST3_MASK );
-
-	cod9002x_usleep(100);
+			PDB_MIC_PGA3_MASK | PDB_MIC_BST3_MASK);
 
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			PDB_MIXL_MASK | PDB_MIXR_MASK ,
-			PDB_MIXL_MASK | PDB_MIXR_MASK );
+			PDB_MIXL_MASK | PDB_MIXR_MASK);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			PDB_DSML_MASK | PDB_DSMR_MASK ,
-			PDB_DSML_MASK | PDB_DSMR_MASK );
+			PDB_DSML_MASK | PDB_DSMR_MASK);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
 			EN_MIX_MIC3L_MASK | EN_MIX_MIC3R_MASK, mix_val);
 
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK, 0);
+			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK, 0x0);
 
-	cod9002x_usleep(100);
 	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
 			RESETB_DSML_MASK | RESETB_DSMR_MASK,
 			RESETB_DSML_MASK | RESETB_DSMR_MASK);
 
-	cod9002x_usleep(100);
+	msleep(140);
+
+	snd_soc_update_bits(codec, COD9002X_18_CTRL_REF,
+			CTMF_VMID_MASK,
+			CTMF_VMID_60K_OM << CTMF_VMID_SHIFT);
 
 	return 0;
 }
 
-static int cod9002_power_on_linein(struct snd_soc_codec *codec)
-{
-	unsigned int mix_val;
-
-	dev_info(codec->dev, "%s called\n", __func__);
-
-	mix_val = snd_soc_read(codec, COD9002X_23_MIX_AD1);
-	mix_val &= EN_MIX_LNLL_MASK | EN_MIX_LNLR_MASK;
-
-	/* Select default if no paths have been selected */
-	if (!mix_val)
-		mix_val = EN_MIX_LNLL_MASK | EN_MIX_LNLR_MASK;
-
-	/* Reset the mixer-switches before powering on */
-	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
-			EN_MIX_LNLL_MASK | EN_MIX_LNLR_MASK, 0x0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, PDB_IGEN_AD_MASK);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
-			PDB_LNL_MASK | PDB_LNR_MASK ,
-			PDB_LNL_MASK | PDB_LNR_MASK );
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_MIXL_MASK | PDB_MIXR_MASK ,
-			PDB_MIXL_MASK | PDB_MIXR_MASK );
-
-	cod9002x_usleep(100);
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_DSML_MASK | PDB_DSMR_MASK ,
-			PDB_DSML_MASK | PDB_DSMR_MASK );
-
-	cod9002x_usleep(100);
-	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
-			EN_MIX_LNLL_MASK | EN_MIX_LNLR_MASK, mix_val);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			EN_DSMR_PREQ_MASK | EN_DSML_PREQ_MASK, 0);
-
-	cod9002x_usleep(100);
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			RESETB_DSML_MASK | RESETB_DSMR_MASK,
-			RESETB_DSML_MASK | RESETB_DSMR_MASK);
-
-	cod9002x_usleep(100);
-
-	return 0;
-}
-
-static int cod9002_power_off_linein(struct snd_soc_codec *codec)
-{
-	dev_dbg(codec->dev, "%s called\n", __func__);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			RESETB_DSML_MASK | RESETB_DSMR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
-			EN_MIX_LNLL_MASK | EN_MIX_LNLR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_DSML_MASK | PDB_DSMR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_MIXL_MASK | PDB_MIXR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
-			PDB_LNL_MASK | PDB_LNR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, 0);
-
-	cod9002x_usleep(100);
-
-
-	return 0;
-}
 static int cod9002_power_off_mic3(struct snd_soc_codec *codec)
 {
+	int other_mic;
+
 	dev_dbg(codec->dev, "%s called\n", __func__);
 
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			RESETB_DSML_MASK | RESETB_DSMR_MASK, 0);
+	other_mic = snd_soc_read(codec, COD9002X_78_MIC_ON);
+	other_mic &= (EN_MIC1_MASK | EN_MIC2_MASK | EN_LN_MASK);
 
-	cod9002x_usleep(100);
+	if (!other_mic)
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				RESETB_DSML_MASK | RESETB_DSMR_MASK, 0x0);
 
 	snd_soc_update_bits(codec, COD9002X_23_MIX_AD1,
-			EN_MIX_MIC3L_MASK | EN_MIX_MIC3R_MASK, 0);
+			EN_MIX_MIC3L_MASK | EN_MIX_MIC3R_MASK, 0x0);
 
-	cod9002x_usleep(100);
+	if (!other_mic) {
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				PDB_DSML_MASK | PDB_DSMR_MASK, 0x0);
 
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_DSML_MASK | PDB_DSMR_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
-			PDB_MIXL_MASK | PDB_MIXR_MASK, 0);
-
-	cod9002x_usleep(100);
-
+		snd_soc_update_bits(codec, COD9002X_11_PD_AD1,
+				PDB_MIXL_MASK | PDB_MIXR_MASK, 0x0);
+	}
 	snd_soc_update_bits(codec, COD9002X_12_PD_AD2,
-			PDB_MIC_PGA3_MASK | PDB_MIC_BST3_MASK, 0);
+			PDB_MIC_PGA3_MASK | PDB_MIC_BST3_MASK, 0x0);
 
-	cod9002x_usleep(100);
-
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-                         PDB_IGEN_AD_MASK, 0);
-
-	cod9002x_usleep(100);
-
-	/* mic bias2 off */
-	snd_soc_update_bits(codec, COD9002X_10_PD_REF,
-			PDB_MCB2_MASK | PDB_MCB_LDO_CODEC_MASK,
-			0);
+	if (!other_mic)
+		snd_soc_update_bits(codec, COD9002X_10_PD_REF,
+				PDB_IGEN_AD_MASK, 0x0);
 
 	return 0;
 }
@@ -1056,14 +1043,11 @@ static int cod9002_power_off_mic3(struct snd_soc_codec *codec)
 static int vmid_ev(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-	dev_dbg(w->codec->dev, "%s called\n", __func__);
+	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		cod9002x_capture_init(w->codec);
-		break;
-
-	case SND_SOC_DAPM_POST_PMU:
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
@@ -1086,15 +1070,17 @@ static int vmid_ev(struct snd_soc_dapm_widget *w,
  */
 static void cod9002x_update_playback_otp(struct snd_soc_codec *codec)
 {
-	int hp_on, spk_on, ep_on;
-	int chop_val;
-	int offset;
+	int chop_val, hp_on, spk_on, ep_on;
+	int offset, offset_ep;
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
 
 	chop_val = snd_soc_read(codec, COD9002X_76_CHOP_DA);
 	hp_on = chop_val & EN_HP_CHOP_MASK;
 	spk_on = chop_val & EN_SPK_PGA_CHOP_MASK;
 	ep_on = chop_val & EN_EP_CHOP_MASK;
+
+	dev_dbg(codec->dev, "%s called, hp_on: %d, spk_on: %d, ep_on: %d",
+			__func__, hp_on, spk_on, ep_on);
 
 	if (!hp_on && !spk_on && !ep_on) {
 		dev_warn(codec->dev, "None of the output paths selected.\n");
@@ -1113,29 +1099,36 @@ static void cod9002x_update_playback_otp(struct snd_soc_codec *codec)
 		snd_soc_write(codec, COD9002X_D5_OFFSET_DAR,
 				cod9002x->otp_reg[offset]);
 
+	} else if (!hp_on && !spk_on && ep_on) {
+		/* We are in EP only mode */
+		offset_ep = snd_soc_read(codec, COD9002X_D7_CTRL_EP);
+		snd_soc_write(codec, COD9002X_D4_OFFSET_DAL,
+				offset_ep);
+
+	} else if (hp_on && spk_on && !ep_on) {
+		/* We are in HP & SPK  mode */
+		/* Updating OTP register 0xD4 */
+		offset = COD9002X_D4_OFFSET_DAL - COD9002X_OTP_REG_WRITE_START;
+		snd_soc_write(codec, COD9002X_D4_OFFSET_DAL,
+				cod9002x->otp_reg[offset]);
+
+		/* Updating OTP register 0xD5 */
+		offset = COD9002X_D5_OFFSET_DAR - COD9002X_OTP_REG_WRITE_START;
+		snd_soc_write(codec, COD9002X_D5_OFFSET_DAR,
+				cod9002x->otp_reg[offset]);
 	} else {
 		/* This is not-only HP mode */
 		snd_soc_write(codec, COD9002X_D4_OFFSET_DAL, 0x0);
 		snd_soc_write(codec, COD9002X_D5_OFFSET_DAR, 0x0);
+	}
 
+	if (!(hp_on && !spk_on && !ep_on)) {
+		/* This is not-only HP mode */
 		/* Disable DNC */
 		snd_soc_update_bits(codec, COD9002X_54_DNC1,
 				EN_DNC_MASK , 0x0);
 
 		cod9002x_usleep(100);
-	}
-
-	if (ep_on) {
-		/**
-		 * When EP path is enabled, update 0xDC as 0x58.
-		 * CTMI_EP_A: 0x1 (2.0 uA)
-		 * CTMI_EP_P: 0x3 (4.0 uA)
-		 * CTMI_EP_D: 0x0 (2.0 uA)
-		 */
-		snd_soc_write(codec, COD9002X_DC_CTRL_EPS,
-				(CTMI_EP_A_1_UA << CTMI_EP_A_SHIFT) |
-				(CTMI_EP_P_D_4_UA << CTMI_EP_P_SHIFT) |
-				(CTMI_EP_P_D_2_UA << CTMI_EP_D_SHIFT));
 	}
 }
 
@@ -1143,47 +1136,58 @@ static int cod9002x_hp_playback_init(struct snd_soc_codec *codec)
 {
 	int mcq_on;
 	unsigned char ctrl_hps;
+
 	dev_dbg(codec->dev, "%s called\n", __func__);
 
 	/* Increase HP current to 4uA in MCQ mode(192Khz), 2uA otherwise */
 	mcq_on = snd_soc_read(codec, COD9002X_53_MQS);
 	ctrl_hps = snd_soc_read(codec, COD9002X_DB_CTRL_HPS);
-	ctrl_hps &= ~CTMI_HP_A_MASK;
+	ctrl_hps &= ~CTMI_HP_AB_MASK;
 
 	if ((mcq_on & MQS_MODE_MASK) == MQS_MODE_MASK)
-		ctrl_hps |= (CTMI_HP_4_UA << CTMI_HP_A_SHIFT);
+		ctrl_hps |= (CTMI_HP_4_UA << CTMI_HP_AB_SHIFT);
 	else
-		ctrl_hps |= (CTMI_HP_2_UA << CTMI_HP_A_SHIFT);
+		ctrl_hps |= (CTMI_HP_4_UA << CTMI_HP_AB_SHIFT);
 
 	snd_soc_write(codec, COD9002X_DB_CTRL_HPS, ctrl_hps);
+
 	cod9002x_usleep(100);
 
-	snd_soc_update_bits(codec, COD9002X_D7_CTRL_CP1,
-			CTRV_CP_NEGREF_MASK, 0x00);
-	/* Enable DNC Start gain*/
+	/* DNC Setting*/
 	snd_soc_update_bits(codec, COD9002X_54_DNC1,
-				DNC_START_GAIN_MASK, DNC_START_GAIN_MASK);
+			DNC_START_GAIN_MASK, DNC_START_GAIN_MASK);
 
-	/* Set DNC Start gain value*/
-	snd_soc_write(codec, COD9002X_5A_DNC7, 0x18);
+	snd_soc_update_bits(codec, COD9002X_56_DNC3,
+			DNC_HP_VOL_EN_MASK, DNC_HP_VOL_EN_MASK);
+
+	/* Set DNC Start gain value update*/
+	snd_soc_write(codec, COD9002X_5A_DNC7, 0x1A);
+
+	snd_soc_update_bits(codec, COD9002X_54_DNC1,
+			EN_DNC_MASK, EN_DNC_MASK);
+
+	cod9002x_usleep(100);
+
+	snd_soc_update_bits(codec, COD9002X_54_DNC1,
+			EN_DNC_MASK, 0x0);
+
+	snd_soc_update_bits(codec, COD9002X_D8_CTRL_CP2,
+			CTMF_CP_CLK_MASK, CP_MAIN_CLK_195_312KHZ);
 
 	/* set HP volume Level */
-	snd_soc_write(codec, COD9002X_30_VOL_HPL, 0x26);
-	snd_soc_write(codec, COD9002X_31_VOL_HPR, 0x26);
+	snd_soc_write(codec, COD9002X_30_VOL_HPL, 0x1A);
+	snd_soc_write(codec, COD9002X_31_VOL_HPR, 0x1A);
+
+	/* SKIP HP VOL */
+	snd_soc_update_bits(codec, COD9002X_19_SV_HP,
+			SKIP_HP_SV_MASK, 0x01 << SKIP_HP_SV_SHIFT);
 
 	/* Update OTP configuration */
 	cod9002x_update_playback_otp(codec);
 
-	/* DNC Target level selection */
-	snd_soc_write(codec, COD9002X_56_DNC3, 0x33);
-
 	/* DNC Window selection set to 20Hz time window */
 	snd_soc_update_bits(codec, COD9002X_57_DNC4, DNC_WINSEL_MASK,
-				(DNC_WIN_SIZE_20HZ << DNC_WINSEL_SHIFT));
-
-	snd_soc_update_bits(codec, COD9002X_36_MIX_DA1,
-			EN_HP_MIXL_DCTL_MASK | EN_HP_MIXR_DCTR_MASK,
-			EN_HP_MIXL_DCTL_MASK | EN_HP_MIXR_DCTR_MASK);
+			(DNC_WIN_SIZE_20HZ << DNC_WINSEL_SHIFT));
 
 	cod9002x_usleep(100);
 
@@ -1193,33 +1197,39 @@ static int cod9002x_hp_playback_init(struct snd_soc_codec *codec)
 static int spkdrv_ev(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-	unsigned int spk_on;
-	unsigned int spk_gain;
-	unsigned int hp_on;
+	int chop_val, hp_on, spk_on, ep_on;
 	int offset;
+	unsigned int spk_gain;
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(w->codec);
 
-	spk_on = snd_soc_read(w->codec, COD9002X_76_CHOP_DA);
-	if (!(spk_on & EN_SPK_PGA_CHOP_MASK)) {
+	chop_val = snd_soc_read(w->codec, COD9002X_76_CHOP_DA);
+	hp_on = chop_val & EN_HP_CHOP_MASK;
+	spk_on = chop_val & EN_SPK_PGA_CHOP_MASK;
+	ep_on = chop_val & EN_EP_CHOP_MASK;
+
+	if (!spk_on) {
 		dev_dbg(w->codec->dev, "%s called but speaker not enabled\n",
 				__func__);
 		return 0;
 	}
-	dev_dbg(w->codec->dev, "%s called event=%d\n", __func__, event);
+
+	dev_dbg(w->codec->dev, "%s called event = %d\n", __func__, event);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		/* Update OTP configuration */
 		cod9002x_update_playback_otp(w->codec);
 
+		/* CP Freq setting scenario rev 0.1*/
+		snd_soc_write(w->codec, COD9002X_DD_CTRL_SPKS1, 0x82);
+
 		snd_soc_update_bits(w->codec, COD9002X_37_MIX_DA2,
-				EN_SPK_MIX_DCTL_MASK | EN_SPK_MIX_DCTR_MASK, 0);
+				EN_SPK_MIX_DCTL_MASK | EN_SPK_MIX_DCTR_MASK, 0x0);
 
 		spk_gain = snd_soc_read(w->codec, COD9002X_39_VOL_SPK);
 
 		snd_soc_update_bits(w->codec, COD9002X_39_VOL_SPK,
-				CTVOL_SPK_PGA_MASK,
-				0x3 << CTVOL_SPK_PGA_SHIFT);
+				CTVOL_SPK_PGA_MASK, 0x0);
 
 		snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
 				PW_AUTO_DA_MASK | APW_SPK_MASK,
@@ -1238,36 +1248,49 @@ static int spkdrv_ev(struct snd_soc_dapm_widget *w,
 
 	case SND_SOC_DAPM_PRE_PMD:
 		snd_soc_update_bits(w->codec, COD9002X_39_VOL_SPK,
-				CTVOL_SPK_PGA_MASK, 0x3);
+				CTVOL_SPK_PGA_MASK, 0x6);
+
+		if (hp_on || ep_on)
+			snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
+					APW_SPK_MASK, 0x0);
+		else
+			snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
+					PW_AUTO_DA_MASK | APW_SPK_MASK, 0x0);
+
+		cod9002x_usleep(200);
 
 		snd_soc_update_bits(w->codec, COD9002X_37_MIX_DA2,
-				EN_SPK_MIX_DCTL_MASK | EN_SPK_MIX_DCTR_MASK, 0);
+			EN_SPK_MIX_DCTL_MASK | EN_SPK_MIX_DCTR_MASK, 0x0);
 
-		snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
-				APW_SPK_MASK, 0);
+		cod9002x_usleep(100);
 
-		cod9002x_usleep(500);
 		/* Check HP is ON */
-		hp_on = snd_soc_read(w->codec, COD9002X_76_CHOP_DA);
-		if ((hp_on & EN_HP_CHOP_MASK)) {
+		if (hp_on) {
 			/* We are in HP only mode */
 			/* Updating OTP register 0xD4 */
 			offset = COD9002X_D4_OFFSET_DAL - COD9002X_OTP_REG_WRITE_START;
 			snd_soc_write(w->codec, COD9002X_D4_OFFSET_DAL,
-				cod9002x->otp_reg[offset]);
+					cod9002x->otp_reg[offset]);
 
 			/* Updating OTP register 0xD5 */
 			offset = COD9002X_D5_OFFSET_DAR - COD9002X_OTP_REG_WRITE_START;
 			snd_soc_write(w->codec, COD9002X_D5_OFFSET_DAR,
-				cod9002x->otp_reg[offset]);
-			snd_soc_write(w->codec, COD9002X_30_VOL_HPL, 0x18);
-			snd_soc_write(w->codec, COD9002X_31_VOL_HPR, 0x18);
-			msleep(6);
+					cod9002x->otp_reg[offset]);
+
 			/* enable DNC */
+			cod9002x_usleep(6000);
+
 			snd_soc_update_bits(w->codec,
-				COD9002X_54_DNC1,EN_DNC_MASK, EN_DNC_MASK);
+					COD9002X_54_DNC1, EN_DNC_MASK, EN_DNC_MASK);
+
+			snd_soc_write(w->codec, COD9002X_30_VOL_HPL,
+					cod9002x->vol_hpl);
+			snd_soc_write(w->codec, COD9002X_31_VOL_HPR,
+					cod9002x->vol_hpr);
 		}
+
 		break;
+
 	default:
 		break;
 	}
@@ -1278,15 +1301,8 @@ static int spkdrv_ev(struct snd_soc_dapm_widget *w,
 static int hpdrv_ev(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-	int hp_on, spk_on, ep_on;
-	int chop_val;
-	unsigned char ctrl_hps;
-	unsigned int detb_period = CTMF_DETB_PERIOD_2048;
+	int chop_val, hp_on, spk_on, ep_on;
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(w->codec);
-	struct cod9002x_jack_det *jackdet = &cod9002x->jack_det;
-
-	if (cod9002x->use_external_jd || cod9002x->use_btn_adc_mode)
-		detb_period = CTMF_DETB_PERIOD_8;
 
 	chop_val = snd_soc_read(w->codec, COD9002X_76_CHOP_DA);
 	hp_on = chop_val & EN_HP_CHOP_MASK;
@@ -1305,147 +1321,76 @@ static int hpdrv_ev(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_PRE_PMU:
 		cod9002x->vol_hpl = snd_soc_read(w->codec, COD9002X_30_VOL_HPL);
 		cod9002x->vol_hpr = snd_soc_read(w->codec, COD9002X_31_VOL_HPR);
-
-		/* enable soft mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, DAC1_SOFT_MUTE_MASK);
-
 		cod9002x_hp_playback_init(w->codec);
 		break;
 
 	case SND_SOC_DAPM_POST_PMU:
-		if (cod9002x->use_external_jd == true ){
-			snd_soc_update_bits(w->codec, COD9002X_86_DET_TIME,
-					CTMF_DETB_PERIOD_MASK, 0x0);
-		} else {
-			/*
-			 * Using codec internal jack detection, there is some noise issue.
-			 * So , 0x86 detection time set to 0xff when insert 3pole jack.
-			 */
-			if(jackdet->jack_det && !jackdet->mic_det) {
-				snd_soc_update_bits(w->codec, COD9002X_86_DET_TIME,
-					CTMF_DETB_PERIOD_MASK ,
-					0x0f << CTMF_DETB_PERIOD_SHIFT );
-			} else {
-				snd_soc_update_bits(w->codec, COD9002X_86_DET_TIME,
-					CTMF_DETB_PERIOD_MASK, 0x0);
-			}
-		}
-		cod9002x_usleep(100);
-
 		snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
 				PW_AUTO_DA_MASK | APW_HP_MASK,
 				PW_AUTO_DA_MASK | APW_HP_MASK);
-		msleep(160);
 
-		snd_soc_update_bits(w->codec, COD9002X_D7_CTRL_CP1,
-			CTRV_CP_NEGREF_MASK, 0x04);
+		snd_soc_update_bits(w->codec, COD9002X_36_MIX_DA1,
+				EN_HP_MIXL_DCTL_MASK | EN_HP_MIXR_DCTR_MASK,
+				EN_HP_MIXL_DCTL_MASK | EN_HP_MIXR_DCTR_MASK);
 
-		snd_soc_update_bits(w->codec, COD9002X_1C_SV_DA,
-				EN_HP_SV_MASK, 0);
-		cod9002x_usleep(100);
+		msleep(180);
 
-		snd_soc_write(w->codec, COD9002X_30_VOL_HPL, 0x1E);
-		snd_soc_write(w->codec, COD9002X_31_VOL_HPR, 0x1E);
-		cod9002x_usleep(100);
-
-		snd_soc_update_bits(w->codec, COD9002X_1C_SV_DA,
-				EN_HP_SV_MASK, EN_HP_SV_MASK);
-		cod9002x_usleep(100);
+		/* SKIP HP VOL OFF */
+		snd_soc_update_bits(w->codec, COD9002X_19_SV_HP,
+				SKIP_HP_SV_MASK, 0x0);
 
 		if (!spk_on && !ep_on) {
-			/* Only HP is on, enable DNC and set default analog HP
+			/* Only HP is on, enable DNC and set analog HP
 			 * volume
 			 */
-			snd_soc_write(w->codec, COD9002X_30_VOL_HPL, 0x18);
-			snd_soc_write(w->codec, COD9002X_31_VOL_HPR, 0x18);
-			msleep(6);
+			cod9002x_usleep(6000);
 
-			/* Limiter level selection -0.2dB (defult) */
 			snd_soc_update_bits(w->codec, COD9002X_54_DNC1,
 					EN_DNC_MASK, EN_DNC_MASK);
+
+			snd_soc_write(w->codec, COD9002X_30_VOL_HPL,
+					cod9002x->vol_hpl);
+			snd_soc_write(w->codec, COD9002X_31_VOL_HPR,
+					cod9002x->vol_hpr);
 		} else {
 			/* Either SPK or EP is on, disable DNC and set given
 			 * analog HP volume
 			 */
 			snd_soc_write(w->codec, COD9002X_30_VOL_HPL,
-							cod9002x->vol_hpl);
+					cod9002x->vol_hpl);
 			snd_soc_write(w->codec, COD9002X_31_VOL_HPR,
-							cod9002x->vol_hpr);
+					cod9002x->vol_hpr);
 		}
 
-		/* diable soft mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, 0x0);
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-		/* enable soft mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, DAC1_SOFT_MUTE_MASK);
-		msleep(24);
+		snd_soc_update_bits(w->codec, COD9002X_56_DNC3,
+				DNC_HP_VOL_EN_MASK, 0x0);
 
-		snd_soc_update_bits(w->codec, COD9002X_54_DNC1,
-				EN_DNC_MASK , 0);
-		cod9002x_usleep(100);
+		/* SKIP HP VOL ON */
+		snd_soc_update_bits(w->codec, COD9002X_19_SV_HP,
+				SKIP_HP_SV_MASK, SKIP_HP_SV_MASK);
 
-		snd_soc_write(w->codec, COD9002X_30_VOL_HPL, 0x1E);
-		snd_soc_write(w->codec, COD9002X_31_VOL_HPR, 0x1E);
-		cod9002x_usleep(6000);
-
-		snd_soc_update_bits(w->codec, COD9002X_1C_SV_DA,
-				EN_HP_SV_MASK, 0);
-		cod9002x_usleep(100);
-
-		snd_soc_write(w->codec, COD9002X_30_VOL_HPL, 0x26);
-		snd_soc_write(w->codec, COD9002X_31_VOL_HPR, 0x26);
-		cod9002x_usleep(100);
-
-		snd_soc_update_bits(w->codec, COD9002X_1C_SV_DA,
-				EN_HP_SV_MASK,
-				EN_HP_SV_MASK);
-		cod9002x_usleep(100);
-
-		snd_soc_update_bits(w->codec, COD9002X_D7_CTRL_CP1,
-			CTRV_CP_NEGREF_MASK, 0x0f);
-
-		snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
-				APW_HP_MASK, 0);
-		msleep(40);
+		if (spk_on || ep_on)
+			snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
+					APW_HP_MASK, 0x0);
+		else
+			snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
+					PW_AUTO_DA_MASK | APW_HP_MASK, 0x0);
 
 		snd_soc_update_bits(w->codec, COD9002X_36_MIX_DA1,
-				EN_HP_MIXL_DCTL_MASK | EN_HP_MIXR_DCTR_MASK, 0);
-		cod9002x_usleep(100);
-		if (cod9002x->use_external_jd == true ) {
-			snd_soc_update_bits(w->codec, COD9002X_86_DET_TIME,
-				CTMF_DETB_PERIOD_MASK,
-				(detb_period << CTMF_DETB_PERIOD_SHIFT));
-		} else {
-			/*
-			 * Using codec internal jack detection, there is some noise issue.
-			 * So , 0x86 detection time set to 0xff when insert 3pole jack.
-			 */
-			if(jackdet->jack_det && !jackdet->mic_det) {
-				snd_soc_update_bits(w->codec, COD9002X_86_DET_TIME,
-					CTMF_DETB_PERIOD_MASK ,
-					0x0f << CTMF_DETB_PERIOD_SHIFT );
-			} else {
-				snd_soc_update_bits(w->codec, COD9002X_86_DET_TIME,
-					CTMF_DETB_PERIOD_MASK,
-					(detb_period << CTMF_DETB_PERIOD_SHIFT));
-			}
-		}
-		cod9002x_usleep(100);
+				EN_HP_MIXL_DCTL_MASK | EN_HP_MIXR_DCTR_MASK, 0x0);
 
-		/* set to default HP current value */
-		ctrl_hps = snd_soc_read(w->codec, COD9002X_DB_CTRL_HPS);
-		ctrl_hps &= ~CTMI_HP_A_MASK;
-		ctrl_hps |= (CTMI_HP_2_UA << CTMI_HP_A_SHIFT);
-		snd_soc_write(w->codec, COD9002X_DB_CTRL_HPS, ctrl_hps);
+		msleep(40);
 
-		/* diable soft mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, 0x0);
+		/* SKIP HP VOL OFF */
+		snd_soc_update_bits(w->codec, COD9002X_19_SV_HP,
+				SKIP_HP_SV_MASK, 0x0);
+
+		snd_soc_update_bits(w->codec, COD9002X_54_DNC1,
+				EN_DNC_MASK , 0x0);
+
 		break;
 
 	default:
@@ -1458,142 +1403,54 @@ static int hpdrv_ev(struct snd_soc_dapm_widget *w,
 static int epdrv_ev(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-	unsigned int ep_on;
+	int chop_val, hp_on, spk_on, ep_on;
 
-	ep_on = snd_soc_read(w->codec, COD9002X_76_CHOP_DA);
-	if (!(ep_on & EN_EP_CHOP_MASK)) {
+	chop_val = snd_soc_read(w->codec, COD9002X_76_CHOP_DA);
+	hp_on = chop_val & EN_HP_CHOP_MASK;
+	spk_on = chop_val & EN_SPK_PGA_CHOP_MASK;
+	ep_on = chop_val & EN_EP_CHOP_MASK;
+
+	if (!ep_on) {
 		dev_dbg(w->codec->dev, "%s called but ear-piece not enabled\n",
 				__func__);
 		return 0;
 	}
+
 	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		/* Update OTP configuration */
 		cod9002x_update_playback_otp(w->codec);
-		/* enable soft mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, DAC1_SOFT_MUTE_MASK);
 
-		snd_soc_update_bits(w->codec, COD9002X_D7_CTRL_CP1,
-			CTRV_CP_NEGREF_MASK, 0x00);
-
-		snd_soc_update_bits(w->codec, COD9002X_10_PD_REF,
-					PDB_VMID_MASK, PDB_VMID_MASK);
-
-		snd_soc_update_bits(w->codec, COD9002X_13_PD_DA1,
-					EN_DCTL_PREQ_MASK | EN_DCTR_PREQ_MASK,
-					EN_DCTL_PREQ_MASK | EN_DCTR_PREQ_MASK);
-
-		snd_soc_update_bits(w->codec, COD9002X_10_PD_REF,
-					PDB_IGEN_MASK, PDB_IGEN_MASK);
-
-		snd_soc_update_bits(w->codec, COD9002X_13_PD_DA1,
-					PDB_DCTL_MASK, PDB_DCTL_MASK);
-
-		snd_soc_update_bits(w->codec, COD9002X_13_PD_DA1,
-					EN_DCTL_PREQ_MASK |
-					EN_DCTR_PREQ_MASK, 0);
-
-		snd_soc_update_bits(w->codec, COD9002X_13_PD_DA1,
-					RESETB_DCTL_MASK, RESETB_DCTL_MASK);
-
-		snd_soc_update_bits(w->codec, COD9002X_15_PD_DA3,
-					PDB_DOUBLER_MASK | PDB_CP_MASK,
-					PDB_DOUBLER_MASK | PDB_CP_MASK);
-		msleep(1);
-
-		snd_soc_update_bits(w->codec, COD9002X_D7_CTRL_CP1,
-			CTRV_CP_NEGREF_MASK, 0x04);
-
-		snd_soc_update_bits(w->codec, COD9002X_15_PD_DA3,
-					PDB_EP_CORE_MASK, PDB_EP_CORE_MASK);
-
-		snd_soc_update_bits(w->codec, COD9002X_15_PD_DA3,
-					PDB_EP_DRV_MASK, PDB_EP_DRV_MASK);
-
-		snd_soc_update_bits(w->codec, COD9002X_33_CTRL_EP,
-					EN_EP_PRT_MASK | EN_EP_IDET_MASK,
-					EN_EP_PRT_MASK | EN_EP_IDET_MASK);
-
+		snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
+				APW_EP_MASK | PW_AUTO_DA_MASK,
+				APW_EP_MASK | PW_AUTO_DA_MASK);
 
 		snd_soc_update_bits(w->codec, COD9002X_37_MIX_DA2,
-				EN_EP_MIX_DCTL_MASK | EN_EP_MIX_DCTR_MASK,
-				EN_EP_MIX_DCTL_MASK | EN_EP_MIX_DCTR_MASK);
-		cod9002x_usleep(100);
-		/* disable_soft_mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, 0);
-		break;
-	case SND_SOC_DAPM_PRE_PMD:
-		/* enable soft mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, DAC1_SOFT_MUTE_MASK);
-		msleep(24);
+				EN_EP_MIX_DCTL_MASK, EN_EP_MIX_DCTL_MASK);
 
-		snd_soc_update_bits(w->codec, COD9002X_D7_CTRL_CP1,
-			CTRV_CP_NEGREF_MASK, 0x0f);
+		msleep(136);
 
-		snd_soc_update_bits(w->codec, COD9002X_33_CTRL_EP,
-					CTMV_CP_MODE_MASK,
-					CTMV_CP_MODE_HALF_VDD << CTMV_CP_MODE_SHIFT);
-
-		snd_soc_update_bits(w->codec, COD9002X_37_MIX_DA2,
-				EN_EP_MIX_DCTL_MASK | EN_EP_MIX_DCTR_MASK, 0x0);
-		cod9002x_usleep(100);
-
-		snd_soc_update_bits(w->codec, COD9002X_33_CTRL_EP,
-					EN_EP_PRT_MASK | EN_EP_IDET_MASK, 0);
-
-		snd_soc_update_bits(w->codec, COD9002X_15_PD_DA3,
-					PDB_DOUBLER_MASK | PDB_CP_MASK |
-					PDB_EP_CORE_MASK |
-					PDB_EP_DRV_MASK, 0);
-
-		snd_soc_update_bits(w->codec, COD9002X_13_PD_DA1,
-						PDB_DCTL_MASK |
-						RESETB_DCTL_MASK, 0);
-
-		snd_soc_update_bits(w->codec, COD9002X_10_PD_REF,
-					PDB_VMID_MASK | PDB_IGEN_MASK, 0);
-
-		snd_soc_update_bits(w->codec, COD9002X_33_CTRL_EP,
-					CTMV_CP_MODE_MASK,
-					CTMV_CP_MODE_ANALOG << CTMV_CP_MODE_SHIFT);
-
-		/* disable_soft_mute */
-		snd_soc_update_bits(w->codec, COD9002X_50_DAC1,
-			DAC1_SOFT_MUTE_MASK, 0);
-	default:
-		break;
-	}
-
-	return 0;
-}
-
-static int mic2_pga_ev(struct snd_soc_dapm_widget *w,
-		struct snd_kcontrol *kcontrol, int event)
-{
-	int mic_on;
-
-	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
-
-	mic_on = snd_soc_read(w->codec, COD9002X_75_CHOP_AD);
-	if (!(mic_on & EN_MCB2_CHOP_MASK)) {
-		dev_dbg(w->codec->dev, "%s: MIC2 is not enabled, returning.\n",
-								__func__);
-		return 0;
-	}
-
-	switch (event) {
-	case SND_SOC_DAPM_PRE_PMU:
-		cod9002_power_on_mic2(w->codec);
 		break;
 
 	case SND_SOC_DAPM_PRE_PMD:
-		cod9002_power_off_mic2(w->codec);
+		if (spk_on || hp_on)
+			snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
+					APW_EP_MASK, 0x0);
+		else
+			snd_soc_update_bits(w->codec, COD9002X_17_PWAUTO_DA,
+					PW_AUTO_DA_MASK | APW_EP_MASK, 0x0);
+
+		cod9002x_usleep(100);
+
+		snd_soc_update_bits(w->codec, COD9002X_37_MIX_DA2,
+				EN_EP_MIX_DCTL_MASK, 0x0);
+
+		cod9002x_usleep(100);
+
 		break;
+
 	default:
 		break;
 	}
@@ -1608,10 +1465,10 @@ static int mic1_pga_ev(struct snd_soc_dapm_widget *w,
 
 	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
 
-	mic_on = snd_soc_read(w->codec, COD9002X_75_CHOP_AD);
-	if (!(mic_on & EN_MCB1_CHOP_MASK)) {
+	mic_on = snd_soc_read(w->codec, COD9002X_78_MIC_ON);
+	if (!(mic_on & EN_MIC1_MASK)) {
 		dev_dbg(w->codec->dev, "%s: MIC1 is not enabled, returning.\n",
-								__func__);
+				__func__);
 		return 0;
 	}
 
@@ -1631,20 +1488,50 @@ static int mic1_pga_ev(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+static int mic2_pga_ev(struct snd_soc_dapm_widget *w,
+		struct snd_kcontrol *kcontrol, int event)
+{
+	int mic_on;
+
+	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
+
+	mic_on = snd_soc_read(w->codec, COD9002X_78_MIC_ON);
+	if (!(mic_on & EN_MIC2_MASK)) {
+		dev_dbg(w->codec->dev, "%s: MIC2 is not enabled, returning.\n",
+				__func__);
+		return 0;
+	}
+
+	switch (event) {
+	case SND_SOC_DAPM_PRE_PMU:
+		cod9002_power_on_mic2(w->codec);
+		break;
+
+	case SND_SOC_DAPM_PRE_PMD:
+		cod9002_power_off_mic2(w->codec);
+		break;
+
+	default:
+		break;
+	}
+
+	return 0;
+}
+
 static int mic3_pga_ev(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-//	int mic_on;
-pr_err("[DEBUG] %s called , event = %d\n", __func__, event);
+	int mic_on;
+
 	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
 
-/*	mic_on = snd_soc_read(w->codec, COD9002X_75_CHOP_AD);
-	if (!(mic_on & EN_LN_CHOP_MASK)) {
+	mic_on = snd_soc_read(w->codec, COD9002X_78_MIC_ON);
+	if (!(mic_on & EN_MIC3_MASK)) {
 		dev_dbg(w->codec->dev, "%s: MIC3 is not enabled, returning.\n",
-								__func__);
+				__func__);
 		return 0;
 	}
-*/
+
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		cod9002_power_on_mic3(w->codec);
@@ -1661,36 +1548,6 @@ pr_err("[DEBUG] %s called , event = %d\n", __func__, event);
 	return 0;
 }
 
-static int linein_pga_ev(struct snd_soc_dapm_widget *w,
-		struct snd_kcontrol *kcontrol, int event)
-{
-	int linein_on;
-
-	dev_dbg(w->codec->dev, "%s called, event = %d\n", __func__, event);
-
-	linein_on = snd_soc_read(w->codec, COD9002X_75_CHOP_AD);
-	if (!(linein_on & EN_LN_CHOP_MASK)) {
-		dev_dbg(w->codec->dev, "%s: LINE IN is not enabled, returning.\n",
-								__func__);
-		return 0;
-	}
-
-	switch (event) {
-	case SND_SOC_DAPM_PRE_PMU:
-		cod9002_power_on_linein(w->codec);
-		break;
-
-	case SND_SOC_DAPM_PRE_PMD:
-		cod9002_power_off_linein(w->codec);
-		break;
-
-	default:
-		break;
-	}
-
-	return 0;
-}
-
 static const struct snd_kcontrol_new adcl_mix[] = {
 	SOC_DAPM_SINGLE("MIC1L Switch", COD9002X_23_MIX_AD1,
 			EN_MIX_MIC1L_SHIFT, 1, 0),
@@ -1698,10 +1555,6 @@ static const struct snd_kcontrol_new adcl_mix[] = {
 			EN_MIX_MIC2L_SHIFT, 1, 0),
 	SOC_DAPM_SINGLE("MIC3L Switch", COD9002X_23_MIX_AD1,
 			EN_MIX_MIC3L_SHIFT, 1, 0),
-	SOC_DAPM_SINGLE("LINELL Switch", COD9002X_23_MIX_AD1,
-			EN_MIX_LNLL_SHIFT, 1, 0),
-	SOC_DAPM_SINGLE("LINERL Switch", COD9002X_24_MIX_AD2,
-			EN_MIX_LNRL_SHIFT, 1, 0),
 };
 
 static const struct snd_kcontrol_new adcr_mix[] = {
@@ -1711,15 +1564,11 @@ static const struct snd_kcontrol_new adcr_mix[] = {
 			EN_MIX_MIC2R_SHIFT, 1, 0),
 	SOC_DAPM_SINGLE("MIC3R Switch", COD9002X_23_MIX_AD1,
 			EN_MIX_MIC3R_SHIFT, 1, 0),
-	SOC_DAPM_SINGLE("LINELR Switch", COD9002X_24_MIX_AD2,
-			EN_MIX_LNLR_SHIFT, 1, 0),
-	SOC_DAPM_SINGLE("LINERR Switch", COD9002X_23_MIX_AD1,
-			EN_MIX_LNRR_SHIFT, 1, 0),
 };
 
 static const struct snd_kcontrol_new spk_on[] = {
 	SOC_DAPM_SINGLE("SPK On", COD9002X_76_CHOP_DA,
-				EN_SPK_PGA_CHOP_SHIFT, 1, 0),
+			EN_SPK_PGA_CHOP_SHIFT, 1, 0),
 };
 
 static const struct snd_kcontrol_new hp_on[] = {
@@ -1731,23 +1580,18 @@ static const struct snd_kcontrol_new ep_on[] = {
 };
 
 static const struct snd_kcontrol_new mic1_on[] = {
-	SOC_DAPM_SINGLE("MIC1 On", COD9002X_75_CHOP_AD,
-					EN_MCB1_CHOP_SHIFT, 1, 0),
+	SOC_DAPM_SINGLE("MIC1 On", COD9002X_78_MIC_ON,
+			EN_MIC1_SHIFT, 1, 0),
 };
 
 static const struct snd_kcontrol_new mic2_on[] = {
-	SOC_DAPM_SINGLE("MIC2 On", COD9002X_75_CHOP_AD,
-					EN_MCB2_CHOP_SHIFT, 1, 0),
+	SOC_DAPM_SINGLE("MIC2 On", COD9002X_78_MIC_ON,
+			EN_MIC2_SHIFT, 1, 0),
 };
 
 static const struct snd_kcontrol_new mic3_on[] = {
-	SOC_DAPM_SINGLE("MIC3 On", COD9002X_75_CHOP_AD,
-					EN_MIC3_CHOP_SHIFT, 1, 0),
-};
-
-static const struct snd_kcontrol_new linein_on[] = {
-	SOC_DAPM_SINGLE("LINEIN On", COD9002X_75_CHOP_AD,
-					EN_LN_CHOP_SHIFT, 1, 0),
+	SOC_DAPM_SINGLE("MIC3 On", COD9002X_78_MIC_ON,
+			EN_MIC3_SHIFT, 1, 0),
 };
 
 static const char * const cod9002x_fm_texts[] = {
@@ -1768,10 +1612,9 @@ static const struct snd_soc_dapm_widget cod9002x_dapm_widgets[] = {
 	SND_SOC_DAPM_SWITCH("MIC1", SND_SOC_NOPM, 0, 0, mic1_on),
 	SND_SOC_DAPM_SWITCH("MIC2", SND_SOC_NOPM, 0, 0, mic2_on),
 	SND_SOC_DAPM_SWITCH("MIC3", SND_SOC_NOPM, 0, 0, mic3_on),
-	SND_SOC_DAPM_SWITCH("LINEIN", SND_SOC_NOPM, 0, 0, linein_on),
 
 	SND_SOC_DAPM_SUPPLY("VMID", SND_SOC_NOPM, 0, 0, vmid_ev,
-			SND_SOC_DAPM_PRE_PMU),
+			SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_PRE_PMD),
 
 	SND_SOC_DAPM_OUT_DRV_E("SPKDRV", SND_SOC_NOPM, 0, 0, NULL, 0,
 			spkdrv_ev, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_PRE_PMD),
@@ -1792,10 +1635,6 @@ static const struct snd_soc_dapm_widget cod9002x_dapm_widgets[] = {
 			SND_SOC_DAPM_PRE_PMD),
 	SND_SOC_DAPM_PGA_E("MIC3_PGA", SND_SOC_NOPM, 0, 0,
 			NULL, 0, mic3_pga_ev,
-			SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU |
-			SND_SOC_DAPM_PRE_PMD),
-	SND_SOC_DAPM_PGA_E("LINEIN_PGA", SND_SOC_NOPM, 0, 0,
-			NULL, 0, linein_pga_ev,
 			SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU |
 			SND_SOC_DAPM_PRE_PMD),
 	SND_SOC_DAPM_MIXER("ADCL Mixer", SND_SOC_NOPM, 0, 0, adcl_mix,
@@ -1866,15 +1705,6 @@ static const struct snd_soc_dapm_route cod9002x_dapm_routes[] = {
 	{"ADCL Mixer", "MIC3L Switch", "MIC3"},
 	{"ADCR Mixer", "MIC3R Switch", "MIC3"},
 
-	{"LINEIN_PGA", NULL, "IN4L"},
-	{"LINEIN_PGA", NULL, "VMID"},
-	{"LINEIN", "LINEIN On", "LINEIN_PGA"},
-
-	{"ADCL Mixer", "LINELL Switch", "LINEIN"},
-	{"ADCL Mixer", "LINERL Switch", "LINEIN"},
-	{"ADCR Mixer", "LINELR Switch", "LINEIN"},
-	{"ADCR Mixer", "LINERR Switch", "LINEIN"},
-
 	{"ADC", NULL, "ADCL Mixer"},
 	{"ADC", NULL, "ADCR Mixer"},
 
@@ -1913,16 +1743,20 @@ static int cod9002x_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
 	case SND_SOC_DAIFMT_NB_NF:
 		break;
+
 	case SND_SOC_DAIFMT_IB_IF:
 		bclk = BCLK_POL_MASK;
 		lrclk = LRCLK_POL_MASK;
 		break;
+
 	case SND_SOC_DAIFMT_IB_NF:
 		bclk = BCLK_POL_MASK;
 		break;
+
 	case SND_SOC_DAIFMT_NB_IF:
 		lrclk = LRCLK_POL_MASK;
 		break;
+
 	default:
 		pr_err("Unsupported Polartiy selection %d\n",
 				fmt & SND_SOC_DAIFMT_INV_MASK);
@@ -1931,64 +1765,9 @@ static int cod9002x_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 
 	snd_soc_update_bits(codec, COD9002X_41_FORMAT,
 			BCLK_POL_MASK | LRCLK_POL_MASK, bclk | lrclk);
+
 	return 0;
 }
-
-int cod9002x_set_externel_jd(struct snd_soc_codec *codec)
-{
-	int ret;
-	struct cod9002x_priv *cod9002x;
-
-	if (codec == NULL) {
-		pr_err("Initilaise codec, before calling %s\n", __func__);
-		return -1;
-	}
-
-	dev_dbg(codec->dev, "%s called\n", __func__);
-
-	cod9002x = snd_soc_codec_get_drvdata(codec);
-
-	cod9002x->use_external_jd = true;
-
-#ifdef CONFIG_PM_RUNTIME
-	pm_runtime_get_sync(codec->dev);
-#else
-	cod9002x_enable(codec->dev);
-#endif
-	/* Enable External jack detecter */
-	ret = snd_soc_update_bits(codec, COD9002X_83_JACK_DET1,
-			CTMP_JD_MODE_MASK, CTMP_JD_MODE_MASK);
-
-	/* Disable Internel Jack detecter */
-	ret |= snd_soc_update_bits(codec, COD9002X_81_DET_ON,
-			EN_PDB_JD_CLK_MASK | EN_PDB_JD_MASK,
-			EN_PDB_JD_CLK_MASK);
-
-	/* Keep mic2 bias always high */
-	snd_soc_update_bits(codec, COD9002X_86_DET_TIME,
-			CTMD_BTN_DBNC_MASK | CTMF_BTN_ON_MASK |
-			CTMF_DETB_PERIOD_MASK,
-			((CTMD_BTN_DBNC_5 << CTMD_BTN_DBNC_SHIFT) |
-			(CTMF_BTN_ON_14_CLK << CTMF_BTN_ON_SHIFT) |
-			(CTMF_DETB_PERIOD_8 << CTMF_DETB_PERIOD_SHIFT)));
-
-	snd_soc_update_bits(codec, COD9002X_06_IRQ1M,
-				IRQ1M_MASK_ALL, 0xFF);
-	snd_soc_update_bits(codec, COD9002X_07_IRQ2M,
-				IRQ2M_MASK_ALL, 0xFF);
-
-	/* Set Jack debounce time */
-	snd_soc_write(codec, COD9002X_84_JACK_DET2, 0x37);
-	snd_soc_write(codec, COD9002X_87_LDO_DIG, 0x03);
-#ifdef CONFIG_PM_RUNTIME
-	pm_runtime_put_sync(codec->dev);
-#else
-	cod9002x_disable(codec->dev);
-#endif
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(cod9002x_set_externel_jd);
 
 static int cod9002x_dai_startup(struct snd_pcm_substream *substream,
 		struct snd_soc_dai *dai)
@@ -2013,14 +1792,14 @@ static void cod9002x_dai_shutdown(struct snd_pcm_substream *substream,
 static void cod9002x_sys_reset(struct snd_soc_codec *codec)
 {
 	unsigned char otp_addr[COD9002X_RESTORE_OTP_COUNT] = {
-					0xd4, 0xd5, 0xd6, 0xdb, 0xdc
-					};
+		0xd4, 0xd5, 0xd6, 0xdb, 0xdc
+	};
 
-	unsigned char reg_addr[COD9002X_RESTORE_REG_COUNT]= {
-					0x20, 0x22, 0x30, 0x31, 0x32,
-					0x36, 0X37, 0x42, 0x44, 0X71,
-					0x75, 0x5a, 0x54, 0x40, 0x16,
-					0x17};
+	unsigned char reg_addr[COD9002X_RESTORE_REG_COUNT] = {
+		0x20, 0x22, 0x30, 0x31, 0x32,
+		0x36, 0X37, 0x42, 0x44, 0X71,
+		0x75, 0x5a, 0x54, 0x40, 0x16,
+		0x17};
 
 	unsigned char otp_val[COD9002X_RESTORE_OTP_COUNT];
 	unsigned char reg_val[COD9002X_RESTORE_REG_COUNT];
@@ -2030,24 +1809,27 @@ static void cod9002x_sys_reset(struct snd_soc_codec *codec)
 
 	/* TODO: Check if we can use cod3022x_{restore/save}_otp_registers() */
 	/* OTP register values are read from 0xF* and written to 0xD* */
-	for(i = 0; i < COD9002X_RESTORE_OTP_COUNT; i++)
+	for (i = 0; i < COD9002X_RESTORE_OTP_COUNT; i++)
 		otp_val[i] = snd_soc_read(codec,
 				(otp_addr[i] + COD9002X_OTP_R_OFFSET));
 
-	for(i = 0; i < COD9002X_RESTORE_REG_COUNT; i++)
+	for (i = 0; i < COD9002X_RESTORE_REG_COUNT; i++)
 		reg_val[i] = snd_soc_read(codec, reg_addr[i]);
 
 	snd_soc_update_bits(codec, COD9002X_40_DIGITAL_POWER,
-						SYS_RSTB_MASK, 0);
-	mdelay(1);
-	snd_soc_update_bits(codec, COD9002X_40_DIGITAL_POWER,
-					SYS_RSTB_MASK, SYS_RSTB_MASK);
-	mdelay(1);
+			SYS_RSTB_MASK, 0x0);
 
-	for(i = 0; i < COD9002X_RESTORE_OTP_COUNT; i++)
+	cod9002x_usleep(1000);
+
+	snd_soc_update_bits(codec, COD9002X_40_DIGITAL_POWER,
+			SYS_RSTB_MASK, SYS_RSTB_MASK);
+
+	cod9002x_usleep(1000);
+
+	for (i = 0; i < COD9002X_RESTORE_OTP_COUNT; i++)
 		snd_soc_write(codec, otp_addr[i], otp_val[i]);
 
-	for(i = 0; i < COD9002X_RESTORE_REG_COUNT; i++)
+	for (i = 0; i < COD9002X_RESTORE_REG_COUNT; i++)
 		snd_soc_write(codec, reg_addr[i], reg_val[i]);
 }
 
@@ -2058,9 +1840,8 @@ static int cod9002x_dai_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_codec *codec = dai->codec;
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
 	unsigned int cur_aifrate;
-	int dnc;
-	unsigned char ctrl_hps, hp_current_val = CTMI_HP_2_UA;
-	int ret;
+	int dnc, ret;
+	unsigned char ctrl_hps, hp_current_val = CTMI_HP_4_UA;
 
 	dev_dbg(codec->dev, "%s called\n", __func__);
 
@@ -2069,7 +1850,7 @@ static int cod9002x_dai_hw_params(struct snd_pcm_substream *substream,
 	if (cod9002x->aifrate != cur_aifrate) {
 		/* DNC needs to be disabled while switching samplerate */
 		dnc = snd_soc_read(codec, COD9002X_54_DNC1);
-		snd_soc_write(codec, COD9002X_54_DNC1, 0);
+		snd_soc_write(codec, COD9002X_54_DNC1, 0x0);
 
 		/* Need to reset H/W while switching from 192KHz to 48KHz */
 		if (cur_aifrate == COD9002X_SAMPLE_RATE_192KHZ) {
@@ -2078,8 +1859,8 @@ static int cod9002x_dai_hw_params(struct snd_pcm_substream *substream,
 			hp_current_val = CTMI_HP_4_UA;
 		} else if (cod9002x->aifrate == COD9002X_SAMPLE_RATE_192KHZ) {
 			snd_soc_update_bits(codec, COD9002X_53_MQS,
-					MQS_MODE_MASK, 0);
-			hp_current_val = CTMI_HP_2_UA;
+					MQS_MODE_MASK, 0x0);
+			hp_current_val = CTMI_HP_4_UA;
 			cod9002x_sys_reset(codec);
 		}
 
@@ -2088,10 +1869,10 @@ static int cod9002x_dai_hw_params(struct snd_pcm_substream *substream,
 		 * on samplerate
 		 */
 		if (APW_HP_MASK == (snd_soc_read(codec, COD9002X_17_PWAUTO_DA)
-							& APW_HP_MASK)) {
+					& APW_HP_MASK)) {
 			ctrl_hps = snd_soc_read(codec, COD9002X_DB_CTRL_HPS);
-			ctrl_hps &= ~CTMI_HP_A_MASK;
-			ctrl_hps |= hp_current_val << CTMI_HP_A_SHIFT;
+			ctrl_hps &= ~CTMI_HP_AB_MASK;
+			ctrl_hps |= hp_current_val << CTMI_HP_AB_SHIFT;
 			snd_soc_write(codec, COD9002X_DB_CTRL_HPS, ctrl_hps);
 		}
 
@@ -2117,29 +1898,291 @@ static int cod9002x_dai_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+static void cod9002x_set_adc_gpio(struct cod9002x_priv *cod9002x, int val)
+{
+	if (gpio_is_valid(cod9002x->adc_pin)) {
+		gpio_direction_output(cod9002x->adc_pin, val);
+		dev_dbg(cod9002x->dev, "%s : adc gpio value: %d\n",
+				__func__, gpio_get_value(cod9002x->adc_pin));
+	}
+}
+
+#define JACK_IN_CHK_MORE_NO 3
+
+static int cod9002x_jack_in_chk_more(struct cod9002x_priv *cod9002x)
+{
+	int i, gdet_adc;
+	bool jack_in_det = true;
+
+	for (i = 0; i < JACK_IN_CHK_MORE_NO; i++) {
+		snd_soc_write(cod9002x->codec, COD9002X_84_JACK_DET, 0x31);
+		cod9002x_set_adc_gpio(cod9002x, 1);
+
+		msleep(50);
+
+		gdet_adc = cod9002x_adc_get_value(cod9002x);
+		dev_dbg(cod9002x->dev, "%s called. gdet_adc:%d\n",
+				__func__, gdet_adc);
+
+		if (gdet_adc == 0 ||
+				gdet_adc > cod9002x->water_threshold_adc_min2)
+			jack_in_det = false;
+	}
+
+	dev_dbg(cod9002x->dev, "%s called. jack_in_det:%d\n",
+			__func__, jack_in_det);
+
+	return jack_in_det;
+}
+
+#define WATER_FINISH_CHK_MORE_NO 3
+
+static int cod9002x_water_finish_chk_more(struct cod9002x_priv *cod9002x)
+{
+	int i, gdet_adc;
+	bool water_finish_det = true;
+
+	for (i = 0; i < WATER_FINISH_CHK_MORE_NO; i++) {
+		snd_soc_write(cod9002x->codec, COD9002X_84_JACK_DET, 0x31);
+		cod9002x_set_adc_gpio(cod9002x, 1);
+
+		msleep(50);
+
+		gdet_adc = cod9002x_adc_get_value(cod9002x);
+		dev_dbg(cod9002x->dev, "%s called. gdet_adc:%d\n",
+				__func__, gdet_adc);
+
+		if (gdet_adc < COD9002X_WATER_DET_THRESHOLD_MAX)
+			water_finish_det = false;
+	}
+
+	dev_dbg(cod9002x->dev, "%s called. water_finish_det:%d\n",
+			__func__, water_finish_det);
+
+	return water_finish_det;
+}
+
+static void cod9002x_water_polling_work(struct work_struct *work)
+{
+	struct cod9002x_priv *cod9002x =
+		container_of(work, struct cod9002x_priv, water_det_polling_work.work);
+	struct snd_soc_codec *codec = cod9002x->codec;
+	struct cod9002x_jack_det *jackdet = &cod9002x->jack_det;
+	struct cod9002x_water_det *waterdet = &cod9002x->water_det;
+	int gdet_adc = 0;
+
+	dev_dbg(cod9002x->dev, "%s called.\n", __func__);
+
+	if (cod9002x->is_suspend)
+		regcache_cache_only(cod9002x->regmap, false);
+
+	snd_soc_write(codec, COD9002X_84_JACK_DET, 0x31);
+
+	/* read adc for water detection */
+	cod9002x_set_adc_gpio(cod9002x, 1);
+	gdet_adc = cod9002x_adc_get_value(cod9002x);
+	dev_dbg(cod9002x->dev, "%s gdet adc %d\n", __func__, gdet_adc);
+	waterdet->gdet_adc_val = gdet_adc;
+
+	snd_soc_write(codec, COD9002X_84_JACK_DET, 0x71);
+
+	/* need to implement to turn off mic bias in manual mode */
+	snd_soc_write(codec, COD9002X_81_TEST_MODE, 0xFF);
+	if (jackdet->jack_det && jackdet->mic_det)
+		snd_soc_write(codec, COD9002X_80_DET_PDB, 0x38);
+	else
+		snd_soc_write(codec, COD9002X_80_DET_PDB, 0x00);
+
+	if (gdet_adc != 0 && gdet_adc >= cod9002x->water_threshold_adc_min2) {
+		if (gdet_adc < COD9002X_WATER_DET_THRESHOLD_MAX) {
+			dev_dbg(cod9002x->dev, "%s water is detected.\n", __func__);
+
+			waterdet->wrong_jack_cnt++;
+			waterdet->jack_det_bypass = true;
+			waterdet->water_det = COD9002X_DET_WATER;
+
+			if (waterdet->jack_det == true) {
+				/* jack out after water detection */
+				waterdet->jack_det = false;
+				jackdet->jack_det = false;
+
+				/* need to implement to turn on mic bias in manual mode */
+				snd_soc_write(codec, COD9002X_80_DET_PDB, 0x38);
+
+				queue_delayed_work(cod9002x->jack_det_wq,
+						&cod9002x->jack_det_work,
+						msecs_to_jiffies(cod9002x->mic_det_delay));
+			}
+			/* polling for water detection */
+			schedule_delayed_work(&cod9002x->water_det_polling_work,
+					msecs_to_jiffies(COD9002X_WATER_DET_POLLING_TIME));
+		} else {
+			dev_dbg(cod9002x->dev, "%s polling is canceled.\n", __func__);
+
+			if (cod9002x_water_finish_chk_more(cod9002x)) {
+				waterdet->wrong_jack_cnt = 0;
+				waterdet->jack_det_bypass = false;
+				waterdet->water_det = COD9002X_NO_DET_WATER;
+
+				/* set mic bias auto mode */
+				snd_soc_write(codec, COD9002X_80_DET_PDB, 0x00);
+				snd_soc_write(codec, COD9002X_81_TEST_MODE, 0x43);
+
+				/* cancel the polling work */
+				cancel_delayed_work(&cod9002x->water_det_polling_work);
+
+				snd_soc_write(codec, COD9002X_84_JACK_DET, 0x71);
+				snd_soc_update_bits(codec, COD9002X_04_IRQ1M,
+						IRQ1M_MASK_ALL, 0xCC);
+
+				if (cod9002x->is_suspend)
+					regcache_cache_only(cod9002x->regmap, true);
+			} else
+				/* polling for water detection */
+				schedule_delayed_work(&cod9002x->water_det_polling_work,
+						msecs_to_jiffies(COD9002X_WATER_DET_POLLING_TIME));
+		}
+	} else {
+		/* water and jack in detection */
+		dev_dbg(cod9002x->dev, "%s water is detected and jack in.\n", __func__);
+
+		if (gdet_adc != 0 && cod9002x_jack_in_chk_more(cod9002x)) {
+			waterdet->jack_det_bypass = true;
+			waterdet->water_det = COD9002X_DET_WATER_JACK_IN;
+			if (waterdet->jack_det == false) {
+				/* jack in after water detection */
+				waterdet->jack_det = true;
+				jackdet->jack_det = true;
+
+				/* need to implement to turn on mic bias in manual mode */
+				snd_soc_write(codec, COD9002X_80_DET_PDB, 0x38);
+
+				queue_delayed_work(cod9002x->jack_det_wq,
+						&cod9002x->jack_det_work,
+						msecs_to_jiffies(cod9002x->mic_det_delay));
+			}
+		}
+
+		dev_dbg(cod9002x->dev, "%s waterdet->wrong_jack_cnt: %d\n",
+				__func__, waterdet->wrong_jack_cnt);
+
+		if (waterdet->wrong_jack_cnt <= WRONG_JACK_IN_CHK_NO) {
+			waterdet->wrong_jack_cnt = 0;
+			waterdet->jack_det_bypass = false;
+			waterdet->water_det = COD9002X_NO_DET_WATER;
+
+			/* set mic bias auto mode */
+			snd_soc_write(codec, COD9002X_80_DET_PDB, 0x00);
+			snd_soc_write(codec, COD9002X_81_TEST_MODE, 0x43);
+
+			/* cancel the polling work */
+			cancel_delayed_work(&cod9002x->water_det_polling_work);
+
+			snd_soc_write(codec, COD9002X_84_JACK_DET, 0x71);
+			snd_soc_update_bits(codec, COD9002X_04_IRQ1M,
+					IRQ1M_MASK_ALL, 0xCC);
+
+			if (cod9002x->is_suspend)
+				regcache_cache_only(cod9002x->regmap, true);
+		} else
+			/* polling for water detection */
+			schedule_delayed_work(&cod9002x->water_det_polling_work,
+					msecs_to_jiffies(COD9002X_WATER_DET_POLLING_TIME));
+	}
+}
+
+static void cod9002x_water_det_work(struct work_struct *work)
+{
+	struct cod9002x_priv *cod9002x =
+		container_of(work, struct cod9002x_priv, water_det_adc_work.work);
+	struct snd_soc_codec *codec = cod9002x->codec;
+	struct cod9002x_jack_det *jackdet = &cod9002x->jack_det;
+	struct cod9002x_water_det *waterdet = &cod9002x->water_det;
+	int gdet_adc = 0;
+
+	dev_dbg(cod9002x->dev, " %s called, jack det %d\n",
+			__func__, jackdet->jack_det);
+
+	snd_soc_write(codec, COD9002X_84_JACK_DET, 0x31);
+
+	waterdet->wrong_jack_cnt = 0;
+	/* read adc for water detect */
+	cod9002x_set_adc_gpio(cod9002x, 1);
+	gdet_adc = cod9002x_adc_get_value(cod9002x);
+	dev_dbg(cod9002x->dev, " %s gdet adc: %d\n", __func__, gdet_adc);
+	waterdet->gdet_adc_val = gdet_adc;
+
+	snd_soc_write(codec, COD9002X_84_JACK_DET, 0x71);
+
+	if (gdet_adc != 0
+			&& gdet_adc >= cod9002x->water_threshold_adc_min1) {
+		if (gdet_adc < COD9002X_WATER_DET_THRESHOLD_MAX) {
+			dev_dbg(cod9002x->dev, "%s water is detected.\n", __func__);
+
+			if (cod9002x->is_suspend)
+				regcache_cache_only(cod9002x->regmap, false);
+
+			waterdet->wrong_jack_cnt++;
+			waterdet->jack_det = false;
+			waterdet->water_det = COD9002X_DET_WATER;
+
+			/* set mic bias manual mode */
+			snd_soc_write(codec, COD9002X_80_DET_PDB, 0x00);
+			snd_soc_write(codec, COD9002X_81_TEST_MODE, 0xFF);
+
+			snd_soc_update_bits(codec, COD9002X_04_IRQ1M,
+					IRQ1M_MASK_ALL, 0xCF);
+			if (cod9002x->is_suspend)
+				regcache_cache_only(cod9002x->regmap, true);
+
+			/* cancel the polling work */
+			cancel_delayed_work(&cod9002x->water_det_polling_work);
+			/* polling for water detection */
+			schedule_delayed_work(&cod9002x->water_det_polling_work,
+					msecs_to_jiffies(COD9002X_WATER_DET_POLLING_TIME));
+		}
+	}
+}
+
 static void cod9002x_jack_det_work(struct work_struct *work)
 {
 	struct cod9002x_priv *cod9002x =
 		container_of(work, struct cod9002x_priv, jack_det_work.work);
-	struct cod9002x_jack_det *jackdet = &cod9002x->jack_det;
 	struct snd_soc_codec *codec = cod9002x->codec;
+	struct cod9002x_jack_det *jackdet = &cod9002x->jack_det;
+	struct cod9002x_water_det *waterdet = &cod9002x->water_det;
 	int adc;
 
-	dev_err(cod9002x->dev, " %s(%d) jackdet: %d \n" , __func__, __LINE__, jackdet->jack_det);
+	dev_dbg(cod9002x->dev, "%s called.\n", __func__);
+	dev_dbg(cod9002x->dev, "%s jack_det:%d, jack_det_bypass:%d, water_det:%d\n",
+			__func__, jackdet->jack_det, waterdet->jack_det_bypass,
+			waterdet->water_det);
+
 	mutex_lock(&cod9002x->jackdet_lock);
 
-	if(jackdet->jack_det == true){
-	/* read adc for mic detect */
-		adc = cod9002x_adc_get_value(cod9002x);
-		dev_err(cod9002x->dev, " %s mic det adc  %d \n" , __func__, adc);
+	if (cod9002x->use_det_gdet_adc_mode &&
+			waterdet->jack_det_bypass == false &&
+			waterdet->water_det == COD9002X_DET_WATER) {
+		mutex_unlock(&cod9002x->jackdet_lock);
+		return;
+	}
 
-		if ( adc > cod9002x->mic_adc_range )
+	if (jackdet->jack_det == true) {
+		cod9002x_set_adc_gpio(cod9002x, 0);
+		/* read adc for mic detect */
+		adc = cod9002x_adc_get_value(cod9002x);
+		dev_dbg(cod9002x->dev, "%s mic det adc  %d\n", __func__, adc);
+
+		if (adc > cod9002x->mic_adc_range)
 			jackdet->mic_det = true;
 		else
 			jackdet->mic_det = false;
+
+		jackdet->adc_val = adc;
 	} else {
 		/* jack/mic out */
 		jackdet->mic_det = false;
+		jackdet->adc_val = -EINVAL;
 	}
 
 	if (jackdet->jack_det && jackdet->mic_det)
@@ -2152,53 +2195,50 @@ static void cod9002x_jack_det_work(struct work_struct *work)
 	if (cod9002x->is_suspend)
 		regcache_cache_only(cod9002x->regmap, false);
 
-	if (jackdet->jack_det && jackdet->mic_det)
-		snd_soc_write(codec, 0x97, 0x32);
-	else if (jackdet->jack_det)
-		snd_soc_write(codec, 0x97, 0x12);
-	else
-		snd_soc_write(codec, 0x97, 0x02);
-
-
+	if (jackdet->jack_det && jackdet->mic_det) {
+		/* 4 Pole Jack-in */
+		snd_soc_write(codec, COD9002X_82_MIC_BIAS, 0x97);
+		snd_soc_write(codec, COD9002X_97_SEL_RES2, 0x32);
+	} else if (jackdet->jack_det) {
+		/* 3 Pole Jack-in */
+		snd_soc_write(codec, COD9002X_82_MIC_BIAS, 0x97);
+		snd_soc_write(codec, COD9002X_97_SEL_RES2, 0x22);
+	} else {
+		/* Jack-out */
+		snd_soc_write(codec, COD9002X_82_MIC_BIAS, 0x17);
+		snd_soc_write(codec, COD9002X_97_SEL_RES2, 0x02);
+	}
 
 	if (cod9002x->is_suspend)
 		regcache_cache_only(cod9002x->regmap, true);
 
 	dev_dbg(cod9002x->codec->dev, "Jack %s, Mic %s\n",
-				jackdet->jack_det ? "inserted" : "removed",
-				jackdet->mic_det ? "inserted" : "removed");
+			jackdet->jack_det ? "inserted" : "removed",
+			jackdet->mic_det ? "inserted" : "removed");
 
 	mutex_unlock(&cod9002x->jackdet_lock);
 }
 
-#define ADC_TRACE_NUM		5
-#define ADC_TRACE_NUM2		2
-#define ADC_READ_DELAY_US	500
-#define ADC_READ_DELAY_MS	1
-#define ADC_DEVI_THRESHOLD	18000
-
-#define BUTTON_PRESS 1
-#define BUTTON_RELEASE 0
-
-static int get_adc_avg(int* adc_values)
+static int get_adc_avg(int *adc_values)
 {
-	int i;
-	int adc_sum=0;
-	for ( i=0; i<ADC_TRACE_NUM; i++) {
+	int i, adc_sum = 0;
+
+	for (i = 0; i < ADC_TRACE_NUM; i++)
 		adc_sum += adc_values[i];
-	}
+
 	adc_sum = adc_sum / ADC_TRACE_NUM;
 	return adc_sum;
 }
 
-static int get_adc_devi(int avg , int* adc_values)
+static int get_adc_devi(int avg , int *adc_values)
 {
-	int i;
-	int devi=0, diff;
-	for ( i=0; i<ADC_TRACE_NUM; i++) {
+	int i, diff, devi = 0;
+
+	for (i = 0; i < ADC_TRACE_NUM; i++) {
 		diff = adc_values[i]-avg;
 		devi += (diff*diff);
 	}
+
 	return devi;
 }
 
@@ -2210,26 +2250,32 @@ static void cod9002x_buttons_work(struct work_struct *work)
 	struct jack_buttons_zone *btn_zones = cod9002x->jack_buttons_zones;
 	int num_buttons_zones = ARRAY_SIZE(cod9002x->jack_buttons_zones);
 	int adc_values[ADC_TRACE_NUM];
-	int current_button_state;
-	int adc;
-	int i, avg, devi;
+	int adc, current_button_state;
+	int i, j, avg, devi;
 	int adc_final_values[ADC_TRACE_NUM2];
-	int j;
-	int adc_final = 0;
-	int adc_max = 0;
+	int adc_final = 0, adc_max = 0;
 
 	if (!jd->jack_det) {
 		dev_err(cod9002x->dev, "Skip button events for jack_out\n");
+		if (jd->privious_button_state == BUTTON_PRESS) {
+			jd->button_det = false;
+			input_report_key(cod9002x->input, jd->button_code, 0);
+			input_sync(cod9002x->input);
+			cod9002x_process_button_ev(cod9002x->codec, jd->button_code, 0);
+			dev_err(cod9002x->dev, ":key %d released when jack_out\n", jd->button_code);
+		}
 		return;
 	}
+
 	if (!jd->mic_det) {
 		dev_err(cod9002x->dev, "Skip button events for 3-pole jack\n");
 		return;
 	}
 
-	for ( j=0; j<ADC_TRACE_NUM2; j++) {
+	for (j = 0; j < ADC_TRACE_NUM2; j++) {
 		/* read GPADC for button */
-		for ( i=0; i<ADC_TRACE_NUM; i++) {
+		for (i = 0; i < ADC_TRACE_NUM; i++) {
+			cod9002x_set_adc_gpio(cod9002x, 0);
 			adc = cod9002x_adc_get_value(cod9002x);
 			adc_values[i] = adc;
 			udelay(ADC_READ_DELAY_US);
@@ -2240,15 +2286,17 @@ static void cod9002x_buttons_work(struct work_struct *work)
 		 * if not read adc after 5 ms
 		 */
 		avg = get_adc_avg(adc_values);
-		devi = get_adc_devi(avg,adc_values);
-		dev_err(cod9002x->dev, ":button adc avg: %d, devi: %d\n",avg, devi);
+		devi = get_adc_devi(avg, adc_values);
+		dev_dbg(cod9002x->dev, ":button adc avg: %d, devi: %d\n", avg, devi);
 
-		if (devi > ADC_DEVI_THRESHOLD ) {
+		if (devi > ADC_DEVI_THRESHOLD) {
 			queue_delayed_work(cod9002x->buttons_wq,
-					&cod9002x->buttons_work, 5);
-			for ( i=0; i<ADC_TRACE_NUM; ){
-				dev_err(cod9002x->dev, ":retry button_work :  %d %d %d %d %d\n",
-				adc_values[i+ 0], adc_values[i+ 1], adc_values[i+ 2], adc_values[i+ 3], adc_values[i+ 4]);
+					&cod9002x->buttons_work, msecs_to_jiffies(10));
+			for (i = 0; i < ADC_TRACE_NUM; ) {
+				dev_dbg(cod9002x->dev,
+						"[DEBUG]:retry button_work : %d %d %d %d %d\n",
+						adc_values[i+0], adc_values[i+1], adc_values[i+2],
+						adc_values[i+3], adc_values[i+4]);
 				i += 5;
 			}
 			return;
@@ -2257,17 +2305,22 @@ static void cod9002x_buttons_work(struct work_struct *work)
 
 		if (avg > adc_max)
 			adc_max = avg;
-		mdelay(ADC_READ_DELAY_MS);
+
+		if (cod9002x->btn_press_delay)
+			mdelay(cod9002x->btn_press_delay);
+		else
+			mdelay(ADC_READ_DELAY_MS);
 	}
 	adc_final = adc_max;
 
 	/* check button press/release */
-	if(adc_final > cod9002x->btn_release_value)
+	if (adc_final > cod9002x->btn_release_value)
 		current_button_state = BUTTON_RELEASE;
 	else
 		current_button_state = BUTTON_PRESS;
 
-	if( jd->privious_button_state == current_button_state) {
+	if (jd->privious_button_state == current_button_state) {
+		dev_err(cod9002x->dev, "Button state did not changed\n");
 		return;
 	}
 
@@ -2277,98 +2330,37 @@ static void cod9002x_buttons_work(struct work_struct *work)
 	jd->adc_val = adc_final;
 
 	for (i = 0; i < 4; i++)
-			pr_err("[DEBUG]: buttons: code(%d), low(%d), high(%d)\n",
+		dev_dbg(cod9002x->dev,
+				"[DEBUG]: buttons: code(%d), low(%d), high(%d)\n",
 				cod9002x->jack_buttons_zones[i].code,
 				cod9002x->jack_buttons_zones[i].adc_low,
 				cod9002x->jack_buttons_zones[i].adc_high);
 
 	/* determine which button press or release */
-	if(current_button_state == BUTTON_PRESS) {
+	if (current_button_state == BUTTON_PRESS) {
 		for (i = 0; i < num_buttons_zones; i++)
 			if (adc >= btn_zones[i].adc_low &&
-				adc <= btn_zones[i].adc_high) {
+					adc <= btn_zones[i].adc_high) {
+				jd->button_det = true;
 				jd->button_code = btn_zones[i].code;
 				input_report_key(cod9002x->input, jd->button_code, 1);
 				input_sync(cod9002x->input);
-				jd->button_det = true;
-				dev_err(cod9002x->dev, ":key %d is pressed, adc %d\n",
-						 btn_zones[i].code, adc);
-				return;
-		}
+				cod9002x_process_button_ev(cod9002x->codec, jd->button_code, 1);
 
-		dev_err(cod9002x->dev, ":key skipped. ADC %d\n", adc);
+				dev_dbg(cod9002x->dev, ":key %d is pressed, adc %d\n",
+						btn_zones[i].code, adc);
+				return;
+			}
+
+		dev_dbg(cod9002x->dev, ":key skipped. ADC %d\n", adc);
 	} else {
 		jd->button_det = false;
 		input_report_key(cod9002x->input, jd->button_code, 0);
 		input_sync(cod9002x->input);
-		dev_err(cod9002x->dev, ":key %d released\n", jd->button_code);
+		cod9002x_process_button_ev(cod9002x->codec, jd->button_code, 0);
+
+		dev_dbg(cod9002x->dev, ":key %d released\n", jd->button_code);
 	}
-
-	return;
-}
-
-#define MIC_DETECT_DELAY 150
-
-static irqreturn_t cod9002x_threaded_isr(int irq, void *data)
-{
-	struct cod9002x_priv *cod9002x = data;
-	struct snd_soc_codec *codec = cod9002x->codec;
-	struct cod9002x_jack_det *jd = &cod9002x->jack_det;
-	unsigned int  stat1, pend1, pend2, pend3;
-	int jackdet = COD9002X_MJ_DET_INVALID;
-	bool det_status_change = false;
-
-	mutex_lock(&cod9002x->key_lock);
-
-	if (cod9002x->is_suspend)
-		regcache_cache_only(cod9002x->regmap, false);
-
-	pend1 = snd_soc_read(codec, COD9002X_01_IRQ1PEND);
-	pend2 = snd_soc_read(codec, COD9002X_02_IRQ2PEND);
-	pend3 = snd_soc_read(codec, COD9002X_03_IRQ3PEND);
-	stat1 = snd_soc_read(codec, COD9002X_0B_STATUS1);
-
-	pr_err("[DEBUG] %s , line %d 01: %02x, 02:%02x, 03:%02x \n",__func__, __LINE__
-					, pend1, pend2, pend3);
-	/*
-	 * Sequence for Jack/Mic detection
-	 *
-	 * (JACK bit 0, MIC bit 1)
-	 *
-	 * 1. Check bits in IRQ2PEND and IRQ3PEND.
-	 * 2. If either of them is 1, then the STATUS1 register tells current
-	 * status of Jack/Mic. Connected if bit value is 1, removed otherwise.
-	 */
-	if ((pend2 & IRQ2_JACK_DET_R) || (pend3 & IRQ3_JACK_DET_F)) {
-		det_status_change = true;
-		jackdet = stat1 & BIT(STATUS1_JACK_DET_SHIFT);
-		jd->jack_det = jackdet ? true : false;
-	}
-
-
-	if (det_status_change) {
-		queue_delayed_work(cod9002x->jack_det_wq,
-			&cod9002x->jack_det_work, msecs_to_jiffies(MIC_DETECT_DELAY));
-		mutex_unlock(&cod9002x->key_lock);
-		goto out;
-	}
-
-	if (cod9002x->use_btn_adc_mode) {
-		/* start button work */
-		queue_delayed_work(cod9002x->buttons_wq,
-					&cod9002x->buttons_work, 5);
-	} else {
-		pr_err("[DEBUG] %s , line %d \n",__func__, __LINE__);
-		/* need to implement button detection */
-	}
-
-	mutex_unlock(&cod9002x->key_lock);
-
-out:
-	if (cod9002x->is_suspend)
-		regcache_cache_only(cod9002x->regmap, true);
-
-	return IRQ_HANDLED;
 }
 
 int cod9002x_jack_mic_register(struct snd_soc_codec *codec)
@@ -2414,15 +2406,12 @@ int cod9002x_jack_mic_register(struct snd_soc_codec *codec)
 #else
 	cod9002x_enable(codec->dev);
 #endif
-
-
-
-
 #ifdef CONFIG_PM_RUNTIME
 	pm_runtime_put_sync(codec->dev);
 #else
 	cod9002x_disable(codec->dev);
 #endif
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(cod9002x_jack_mic_register);
@@ -2433,13 +2422,6 @@ static const struct snd_soc_dai_ops cod9002x_dai_ops = {
 	.shutdown = cod9002x_dai_shutdown,
 	.hw_params = cod9002x_dai_hw_params,
 };
-
-#define COD9002X_RATES		SNDRV_PCM_RATE_8000_192000
-
-#define COD9002X_FORMATS	(SNDRV_PCM_FMTBIT_S16_LE |		\
-				SNDRV_PCM_FMTBIT_S20_3LE |	\
-				SNDRV_PCM_FMTBIT_S24_LE |	\
-				SNDRV_PCM_FMTBIT_S32_LE)
 
 static struct snd_soc_dai_driver cod9002x_dai[] = {
 	{
@@ -2487,18 +2469,15 @@ static struct snd_soc_dai_driver cod9002x_dai[] = {
 static int cod9002x_regulators_enable(struct snd_soc_codec *codec)
 {
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
-	int ret;
 
-	ret = regulator_enable(cod9002x->vdd);
-
-	return ret;
+	return  regulator_enable(cod9002x->vdd);
 }
 
-static void cod9002x_regulators_disable(struct snd_soc_codec *codec)
+static int cod9002x_regulators_disable(struct snd_soc_codec *codec)
 {
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
 
-	regulator_disable(cod9002x->vdd);
+	return regulator_disable(cod9002x->vdd);
 }
 
 /* The clock for COD9002X is provided by the Audio sub-system. Hence we need to
@@ -2508,12 +2487,12 @@ static void cod9002x_regulators_disable(struct snd_soc_codec *codec)
  */
 static void cod9002x_clock_enable(struct snd_soc_codec *codec)
 {
-//	s2803x_get_sync();  //$$$_kjc
+	audmixer_get_sync();
 }
 
 static void cod9002x_clock_disable(struct snd_soc_codec *codec)
 {
-//	s2803x_put_sync();  //$$$_kjc
+	audmixer_put_sync();
 }
 
 static void cod9002x_save_otp_registers(struct snd_soc_codec *codec)
@@ -2522,10 +2501,9 @@ static void cod9002x_save_otp_registers(struct snd_soc_codec *codec)
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
 
 	dev_dbg(codec->dev, "%s called\n", __func__);
-	for (i = 0; i < COD9002X_OTP_MAX_REG; i++) {
+	for (i = 0; i < COD9002X_OTP_MAX_REG; i++)
 		cod9002x->otp_reg[i] = (unsigned char) snd_soc_read(codec,
 				(COD9002X_D0_CTRL_IREF1 + i));
-	}
 }
 
 static void cod9002x_restore_otp_registers(struct snd_soc_codec *codec)
@@ -2534,20 +2512,13 @@ static void cod9002x_restore_otp_registers(struct snd_soc_codec *codec)
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
 
 	dev_dbg(codec->dev, "%s called\n", __func__);
-	for (i = 0; i < COD9002X_OTP_MAX_REG; i++) {
+	for (i = 0; i < COD9002X_OTP_MAX_REG; i++)
 		snd_soc_write(codec, (COD9002X_D0_CTRL_IREF1 + i),
-					cod9002x->otp_reg[i]);
-	}
+				cod9002x->otp_reg[i]);
 }
 
 static void cod9002x_reset_io_selector_bits(struct snd_soc_codec *codec)
 {
-	/* Reset input selector bits */
-	snd_soc_update_bits(codec, COD9002X_75_CHOP_AD,
-			EN_MIC_CHOP_MASK | EN_MCB1_CHOP_MASK |
-			EN_MCB2_CHOP_MASK | EN_MIC3_CHOP_MASK,
-			EN_MIC_CHOP_MASK);
-
 	/* Reset output selector bits */
 	snd_soc_update_bits(codec, COD9002X_76_CHOP_DA,
 			EN_HP_CHOP_MASK | EN_EP_CHOP_MASK |
@@ -2611,33 +2582,60 @@ static void cod9002x_post_fw_update_failure(void *context)
 #endif
 
 	if (cod9002x->use_external_jd) {
-		snd_soc_update_bits(codec, 0x04,
-				IRQ1M_MASK_ALL, 0xff);
-		snd_soc_update_bits(codec, 0x05,
-				IRQ2M_MASK_ALL, 0xff);
-		snd_soc_update_bits(codec, 0x06,
-				IRQ3M_MASK_ALL, 0xff);
+		snd_soc_update_bits(codec, COD9002X_04_IRQ1M,
+				IRQ1M_MASK_ALL, 0xFF);
+		snd_soc_update_bits(codec, COD9002X_05_IRQ2M,
+				IRQ2M_MASK_ALL, 0xFF);
+		snd_soc_update_bits(codec, COD9002X_06_IRQ3M,
+				IRQ3M_MASK_ALL, 0xFF);
 	} else {
-		snd_soc_update_bits(codec, 0x04,
-				IRQ1M_MASK_ALL, 0xC0);
-		snd_soc_update_bits(codec, 0x05,
-				IRQ2M_MASK_ALL, 0xff);
-		snd_soc_update_bits(codec, 0x06,
-				IRQ3M_MASK_ALL, 0xff);
+		snd_soc_update_bits(codec, COD9002X_04_IRQ1M,
+				IRQ1M_MASK_ALL, 0xCC);
+		snd_soc_update_bits(codec, COD9002X_05_IRQ2M,
+				IRQ2M_MASK_ALL, 0xFF);
+		snd_soc_update_bits(codec, COD9002X_06_IRQ3M,
+				IRQ3M_MASK_ALL, 0xFF);
 	}
 
-	snd_soc_write(codec, 0x81, 0x02);
-	mdelay(1);
-	snd_soc_write(codec, 0x81, 0x03);
-	snd_soc_write(codec, 0x83, 0x00);
-	snd_soc_write(codec, 0x84, 0x51);
-	snd_soc_write(codec, 0x85, 0xff);
-	snd_soc_write(codec, 0x86, 0x04);
-	snd_soc_write(codec, 0x96, 0x47);
-	snd_soc_write(codec, 0x97, 0x02);
+	snd_soc_write(codec, COD9002X_81_TEST_MODE, 0x02);
+	cod9002x_usleep(1000);
+	snd_soc_write(codec, COD9002X_81_TEST_MODE, 0x43);
+
+	snd_soc_write(codec, COD9002X_83_JACK_MODE, 0x00);
+	/* set pull up resistance according to water proof */
+	if (cod9002x->use_det_gdet_adc_mode || cod9002x->use_jack_pullup_mode)
+		snd_soc_write(codec, COD9002X_84_JACK_DET, 0x71);
+	else
+		snd_soc_write(codec, COD9002X_84_JACK_DET, 0x31);
+	snd_soc_write(codec, COD9002X_85_JACK_DBNC1, 0xFF);
+
+	/**
+	 * If set 'dis-det-surge-mode' in device tree file,
+	 * set jack out debounce time to 4 (120usec)
+	 * in order to prevent jack in/out pop noise for specific model.
+	 **/
+	if (cod9002x->dis_det_surge_mode == true)
+		snd_soc_write(codec, COD9002X_86_JACK_DBNC2, 0x04);
+	else {
+		/**
+		 * Set jack out debounce time to 18 (550usec)
+		 * to ignore surge test interrupt.
+		 * Also, set btn debounce time to 36 (1msec)
+		 * in order to prevent btn interrupt after jack out.
+		 **/
+		snd_soc_write(codec, COD9002X_86_JACK_DBNC2, 0x12);
+		snd_soc_write(codec, COD9002X_89_BTN_DBNC, 0x09);
+	}
+
+	snd_soc_write(codec, COD9002X_91_DLY_MCB2, 0xA0);
+	snd_soc_write(codec, COD9002X_96_SEL_RES1, 0x47);
+	snd_soc_write(codec, COD9002X_97_SEL_RES2, 0x02);
 
 	/* Default value, enabling HPF and setting freq at 100Hz */
-	snd_soc_write(codec, COD9002X_42_ADC1, 0x0c);
+	snd_soc_write(codec, COD9002X_42_ADC1, 0x0C);
+
+	/* Disable mic bias1 chopping for remove mic noise */
+	snd_soc_write(codec, COD9002X_75_CHOP_AD, 0x3D);
 
 	snd_soc_update_bits(codec, COD9002X_71_CLK1_DA,
 			SEL_CHCLK_DA_MASK | EN_HALF_CHOP_HP_MASK |
@@ -2658,15 +2656,15 @@ static void cod9002x_post_fw_update_failure(void *context)
 			(CTMI_MIC2_2U << CTMI_MIC2_SHIFT) | CTMI_MIC1_2U);
 
 	snd_soc_update_bits(codec, COD9002X_D3_CTRL_IREF4,
-		CTMI_MIC_BUFF_MASK | CTMI_MIC3_MASK,
-		(CTMI_MIC_BUFF_2U << CTMI_MIC_BUFF_SHIFT) | CTMI_MIC3_2U);
+			CTMI_MIC_BUFF_MASK | CTMI_MIC3_MASK,
+			(CTMI_MIC_BUFF_2U << CTMI_MIC_BUFF_SHIFT) | CTMI_MIC3_2U);
 
 	snd_soc_write(codec, COD9002X_43_ADC_L_VOL, 0x18);
 	snd_soc_write(codec, COD9002X_44_ADC_R_VOL, 0x18);
-	/* Boost 20 dB, Gain 0 dB for MIC1 */
-	snd_soc_write(codec, COD9002X_20_VOL_AD1, 0x54);
-	snd_soc_write(codec, COD9002X_21_VOL_AD2, 0x54);
-	snd_soc_write(codec, COD9002X_22_VOL_AD3, 0x54);
+	/* Boost 20 dB, Gain 0 dB for MIC1/MIC2/MIC3 */
+	snd_soc_write(codec, COD9002X_20_VOL_AD1, 0xa0);
+	snd_soc_write(codec, COD9002X_21_VOL_AD2, 0xa0);
+	snd_soc_write(codec, COD9002X_22_VOL_AD3, 0xa0);
 	/* Gain 6dB for Line-in */
 	snd_soc_write(codec, COD9002X_5A_DNC7, 0x18);
 
@@ -2714,19 +2712,20 @@ static void cod9002x_post_fw_update_success(void *context)
 #endif
 
 	if (cod9002x->use_external_jd) {
-		snd_soc_update_bits(codec, COD9002X_06_IRQ1M,
-				IRQ1M_MASK_ALL, 0xff);
-		snd_soc_update_bits(codec, COD9002X_07_IRQ2M,
-				IRQ2M_MASK_ALL, 0xff);
+		snd_soc_update_bits(codec, COD9002X_04_IRQ1M,
+				IRQ1M_MASK_ALL, 0xFF);
+		snd_soc_update_bits(codec, COD9002X_05_IRQ2M,
+				IRQ2M_MASK_ALL, 0xFF);
+		snd_soc_update_bits(codec, COD9002X_06_IRQ3M,
+				IRQ3M_MASK_ALL, 0xFF);
 	} else {
-		snd_soc_update_bits(codec, COD9002X_06_IRQ1M,
-				IRQ1M_MASK_ALL, 0);
-		snd_soc_update_bits(codec, COD9002X_07_IRQ2M,
-				IRQ2M_MASK_ALL, 0);
+		snd_soc_update_bits(codec, COD9002X_04_IRQ1M,
+				IRQ1M_MASK_ALL, 0x0);
+		snd_soc_update_bits(codec, COD9002X_05_IRQ2M,
+				IRQ2M_MASK_ALL, 0x0);
+		snd_soc_update_bits(codec, COD9002X_06_IRQ3M,
+				IRQ3M_MASK_ALL, 0x0);
 	}
-
-	/* Update for 3-pole jack detection */
-	snd_soc_write(codec, COD9002X_85_MIC_DET, 0x03);
 
 	/* Reset input/output selector bits */
 	cod9002x_reset_io_selector_bits(codec);
@@ -2768,18 +2767,17 @@ static void cod9002x_post_fw_update_success(void *context)
 static void cod9002x_regmap_sync(struct device *dev)
 {
 	struct cod9002x_priv *cod9002x = dev_get_drvdata(dev);
-	unsigned char reg[COD9002X_MAX_REGISTER];
+	unsigned char reg[COD9002X_MAX_REGISTER] = {0,};
 	int i;
 
 	/* Read from Cache */
-	for (i = 0; i <COD9002X_REGCACHE_SYNC_END_REG ; i++)
+	for (i = 0; i < COD9002X_REGCACHE_SYNC_END_REG; i++)
 		if (cod9002x_readable_register(dev, i) &&
-				(!cod9002x_volatile_register(dev,i)))
-			reg[i] = (unsigned char)
-				snd_soc_read(cod9002x->codec, i);
+				!cod9002x_volatile_register(dev, i))
+			reg[i] = (unsigned char) snd_soc_read(cod9002x->codec, i);
 
 	snd_soc_write(cod9002x->codec, COD9002X_40_DIGITAL_POWER,
-					reg[COD9002X_40_DIGITAL_POWER]);
+			reg[COD9002X_40_DIGITAL_POWER]);
 
 	regcache_sync(cod9002x->regmap);
 }
@@ -2788,11 +2786,11 @@ static void cod9002x_reg_restore(struct snd_soc_codec *codec)
 {
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
 
-	snd_soc_update_bits(codec, COD9002X_81_DET_ON,
+	snd_soc_update_bits(codec, COD9002X_81_TEST_MODE,
 			EN_PDB_JD_CLK_MASK, EN_PDB_JD_CLK_MASK);
 
 	/* Give 15ms delay before storing the otp values */
-	usleep_range(15000, 15000 + 1000);
+	msleep(15);
 
 	/*
 	 * The OTP values are the boot-time values. For registers D0-DE, we need
@@ -2808,21 +2806,25 @@ static void cod9002x_reg_restore(struct snd_soc_codec *codec)
 		cod9002x_restore_otp_registers(cod9002x->codec);
 	}
 }
+
 static void cod9002x_i2c_parse_dt(struct cod9002x_priv *cod9002x)
 {
 	/* todo .. Need to add DT parsing for 9002 */
 	struct device *dev = cod9002x->dev;
 	struct device_node *np = dev->of_node;
-	unsigned int bias_v_conf;
-	int mic_range, mic_delay, btn_rel_val;
 	struct of_phandle_args args;
-	int i = 0;
-	int ret;
+	unsigned int bias_v_conf;
+	int mic_range, mic_delay, btn_rel_val, btn_delay, water_threshold_min1, water_threshold_min2;
+	int i, ret;
 
-	cod9002x->int_gpio = of_get_gpio(np, 0);
+	cod9002x->adc_pin = of_get_gpio(np, 0);
 
-	if (cod9002x->int_gpio < 0)
-		dev_err(dev, "(*)Error in getting Codec-9002 Interrupt gpio\n");
+	if (gpio_is_valid(cod9002x->adc_pin)) {
+		ret = devm_gpio_request(cod9002x->codec->dev,
+				cod9002x->adc_pin, "codec_adc_gpio");
+		if (ret)
+			dev_dbg(dev, "%s : fail to assignment codec_adc_gpio\n", __func__);
+	}
 
 	/* Default Bias Voltages */
 	cod9002x->mic_bias1_voltage = MIC_BIAS1_VO_3_0V;
@@ -2830,18 +2832,20 @@ static void cod9002x_i2c_parse_dt(struct cod9002x_priv *cod9002x)
 	cod9002x->mic_bias_ldo_voltage = MIC_BIAS_LDO_VO_3_3V;
 
 	ret = of_property_read_u32(dev->of_node,
-				"mic-bias1-voltage", &bias_v_conf);
-	if ((!ret) && ((bias_v_conf >= MIC_BIAS1_VO_2_5V) &&
-			(bias_v_conf <= MIC_BIAS1_VO_3_0V)))
+			"mic-bias1-voltage", &bias_v_conf);
+	if (!ret &&
+			(bias_v_conf >= MIC_BIAS1_VO_2_8V &&
+			 bias_v_conf <= MIC_BIAS1_VO_3_0V))
 		cod9002x->mic_bias1_voltage = bias_v_conf;
 	else
 		dev_dbg(dev, "Property 'mic-bias1-voltage' %s",
 				ret ? "not found" : "invalid value (use:1-3)");
 
 	ret = of_property_read_u32(dev->of_node,
-				"mic-bias2-voltage", &bias_v_conf);
-	if ((!ret) && ((bias_v_conf >= MIC_BIAS2_VO_2_5V) &&
-			(bias_v_conf <= MIC_BIAS2_VO_3_0V)))
+			"mic-bias2-voltage", &bias_v_conf);
+	if (!ret &&
+			(bias_v_conf >= MIC_BIAS2_VO_2_8V &&
+			 bias_v_conf <= MIC_BIAS2_VO_3_0V))
 		cod9002x->mic_bias2_voltage = bias_v_conf;
 	else
 		dev_dbg(dev, "Property 'mic-bias2-voltage' %s",
@@ -2857,7 +2861,7 @@ static void cod9002x_i2c_parse_dt(struct cod9002x_priv *cod9002x)
 	if (!ret)
 		cod9002x->mic_det_delay = mic_delay;
 	else
-		cod9002x->mic_det_delay = 50;
+		cod9002x->mic_det_delay = 430;
 
 	ret = of_property_read_u32(dev->of_node, "btn-release-value", &btn_rel_val);
 	if (!ret)
@@ -2865,10 +2869,28 @@ static void cod9002x_i2c_parse_dt(struct cod9002x_priv *cod9002x)
 	else
 		cod9002x->btn_release_value = 1100;
 
+	ret = of_property_read_u32(dev->of_node, "btn-press-delay", &btn_delay);
+	if (!ret)
+		cod9002x->btn_press_delay = btn_delay;
+	else
+		cod9002x->btn_press_delay = 0;
+
+	ret = of_property_read_u32(dev->of_node, "water-threshold-min1", &water_threshold_min1);
+	if (!ret)
+		cod9002x->water_threshold_adc_min1 = water_threshold_min1;
+	else
+		cod9002x->water_threshold_adc_min1 = COD9002X_WATER_DET_THRESHOLD_MIN_FIRST;
+
+	ret = of_property_read_u32(dev->of_node, "water-threshold-min2", &water_threshold_min2);
+	if (!ret)
+		cod9002x->water_threshold_adc_min2 = water_threshold_min2;
+	else
+		cod9002x->water_threshold_adc_min2 = COD9002X_WATER_DET_THRESHOLD_MIN;
+
 	ret = of_property_read_u32(dev->of_node,
-				"mic-bias-ldo-voltage", &bias_v_conf);
+			"mic-bias-ldo-voltage", &bias_v_conf);
 	if ((!ret) && ((bias_v_conf >= MIC_BIAS_LDO_VO_2_8V) &&
-			(bias_v_conf <= MIC_BIAS_LDO_VO_3_3V)))
+				(bias_v_conf <= MIC_BIAS_LDO_VO_3_3V)))
 		cod9002x->mic_bias_ldo_voltage = bias_v_conf;
 	else
 		dev_dbg(dev, "Property 'mic-bias-ldo-voltage' %s",
@@ -2885,17 +2907,25 @@ static void cod9002x_i2c_parse_dt(struct cod9002x_priv *cod9002x)
 	else
 		cod9002x->update_fw = false;
 
+	if (of_find_property(dev->of_node, "use-det-gdet-adc-mode", NULL) != NULL)
+		cod9002x->use_det_gdet_adc_mode = true;
+
 	if (of_find_property(dev->of_node, "use-btn-adc-mode", NULL) != NULL)
 		cod9002x->use_btn_adc_mode = true;
 
-	dev_err(dev, "Using %s for button detection\n",
-			cod9002x->use_btn_adc_mode ? "GPADC" : "internal h/w");
+	if (of_find_property(dev->of_node, "dis-det-surge-mode", NULL) != NULL)
+		cod9002x->dis_det_surge_mode = true;
 
+	if (of_find_property(dev->of_node, "use-jack-pullup-mode", NULL) != NULL)
+		cod9002x->use_jack_pullup_mode = true;
+
+	dev_dbg(dev, "Using %s for button detection\n",
+			cod9002x->use_btn_adc_mode ? "GPADC" : "internal h/w");
 	if (cod9002x->use_btn_adc_mode) {
 		/* Parsing but-zones, a maximum of 4 buttons are supported */
 		for (i = 0; i < 4; i++) {
 			if (of_parse_phandle_with_args(dev->of_node,
-				"but-zones-list", "#list-but-cells", i, &args))
+						"but-zones-list", "#list-but-cells", i, &args))
 				break;
 
 			cod9002x->jack_buttons_zones[i].code = args.args[0];
@@ -2906,28 +2936,31 @@ static void cod9002x_i2c_parse_dt(struct cod9002x_priv *cod9002x)
 		cod9002x->jack_det.privious_button_state = BUTTON_RELEASE;
 
 		for (i = 0; i < 4; i++)
-			dev_err(dev, "[DEBUG]: buttons: code(%d), low(%d), high(%d)\n",
-				cod9002x->jack_buttons_zones[i].code,
-				cod9002x->jack_buttons_zones[i].adc_low,
-				cod9002x->jack_buttons_zones[i].adc_high);
+			dev_dbg(dev, "[DEBUG]: buttons: code(%d), low(%d), high(%d)\n",
+					cod9002x->jack_buttons_zones[i].code,
+					cod9002x->jack_buttons_zones[i].adc_low,
+					cod9002x->jack_buttons_zones[i].adc_high);
 	}
 }
 
 struct codec_notifier_struct {
 	struct cod9002x_priv *cod9002x;
 };
+
 static struct codec_notifier_struct codec_notifier_t;
 
-static int cod9002x_notifier_handler(struct notifier_block *nb , unsigned long insert, void *data)
+static int cod9002x_notifier_handler(struct notifier_block *nb,
+		unsigned long insert, void *data)
 {
 	struct codec_notifier_struct *codec_notifier_data = data;
 	struct cod9002x_priv *cod9002x = codec_notifier_data->cod9002x;
 	struct cod9002x_jack_det *jd = &cod9002x->jack_det;
+	struct cod9002x_water_det *waterdet = &cod9002x->water_det;
 	unsigned int  stat1, pend1, pend2, pend3;
 	int jackdet = COD9002X_MJ_DET_INVALID;
 	bool det_status_change = false;
 
-	pr_err("[DEBUG]%s codec notifier event call from mfd\n" , __func__);
+	dev_dbg(cod9002x->dev, "%s called from mfd\n", __func__);
 	mutex_lock(&cod9002x->key_lock);
 
 	if (cod9002x->is_suspend)
@@ -2938,8 +2971,9 @@ static int cod9002x_notifier_handler(struct notifier_block *nb , unsigned long i
 	pend3 = cod9002x->irq_val[2];
 	stat1 = cod9002x->irq_val[3];
 
-	pr_err("[DEBUG] %s , line %d 01: %02x, 02:%02x, 03:%02x \n",__func__, __LINE__
-					, pend1, pend2, pend3);
+	dev_dbg(cod9002x->dev, "[DEBUG] %s , line %d 01: %02x, 02:%02x, 03:%02x\n",
+			__func__, __LINE__, pend1, pend2, pend3);
+
 	/*
 	 * Sequence for Jack/Mic detection
 	 *
@@ -2949,15 +2983,36 @@ static int cod9002x_notifier_handler(struct notifier_block *nb , unsigned long i
 	 * 2. If either of them is 1, then the STATUS1 register tells current
 	 * status of Jack/Mic. Connected if bit value is 1, removed otherwise.
 	 */
-	if ((pend1 & IRQ2_JACK_DET_R) || (pend1 & IRQ3_JACK_DET_F)) {
+	if ((pend1 & IRQ1_JACK_DET_R) || (pend1 & IRQ1_JACK_DET_F)) {
+		if (waterdet->water_det) {
+			mutex_unlock(&cod9002x->key_lock);
+			goto out;
+		}
+
 		det_status_change = true;
 		jackdet = stat1 & BIT(STATUS1_JACK_DET_SHIFT);
 		jd->jack_det = jackdet ? true : false;
+
+		if (jd->jack_det == true)
+			dev_dbg(cod9002x->dev, "%s : jack in interrupt\n", __func__);
+		else
+			dev_dbg(cod9002x->dev, "%s : jack out interrupt\n", __func__);
 	}
 
 	if (det_status_change) {
-		queue_delayed_work(cod9002x->jack_det_wq,
-			&cod9002x->jack_det_work, msecs_to_jiffies(MIC_DETECT_DELAY));
+		if (cod9002x->use_det_gdet_adc_mode && jd->jack_det == true)
+			queue_delayed_work(cod9002x->water_det_adc_wq,
+				&cod9002x->water_det_adc_work, msecs_to_jiffies(400));
+
+		/* mic detection delay */
+		if (jd->jack_det)
+			queue_delayed_work(cod9002x->jack_det_wq,
+				&cod9002x->jack_det_work,
+				msecs_to_jiffies(cod9002x->mic_det_delay));
+		else
+			queue_delayed_work(cod9002x->jack_det_wq,
+					&cod9002x->jack_det_work, msecs_to_jiffies(0));
+
 		mutex_unlock(&cod9002x->key_lock);
 		goto out;
 	}
@@ -2965,9 +3020,9 @@ static int cod9002x_notifier_handler(struct notifier_block *nb , unsigned long i
 	if (cod9002x->use_btn_adc_mode) {
 		/* start button work */
 		queue_delayed_work(cod9002x->buttons_wq,
-					&cod9002x->buttons_work, 5);
+				&cod9002x->buttons_work, msecs_to_jiffies(10));
 	} else {
-		pr_err("[DEBUG] %s , line %d \n",__func__, __LINE__);
+		dev_dbg(cod9002x->dev, "[DEBUG] %s , line %d\n", __func__, __LINE__);
 		/* need to implement button detection */
 	}
 
@@ -2981,15 +3036,17 @@ out:
 }
 static BLOCKING_NOTIFIER_HEAD(cod9002x_notifier);
 
-int cod9002x_register_notifier(struct notifier_block *n, struct cod9002x_priv *cod9002x)
+int cod9002x_register_notifier(struct notifier_block *n,
+		struct cod9002x_priv *cod9002x)
 {
 	int ret;
-	pr_err("[DEBUG] %s(%d)regiseter  \n", __func__, __LINE__);
 
+	dev_dbg(cod9002x->dev, "[DEBUG] %s(%d)regiseter\n", __func__, __LINE__);
 	codec_notifier_t.cod9002x = cod9002x;
 	ret = blocking_notifier_chain_register(&cod9002x_notifier, n);
-	if(ret<0)
-		pr_err("[DEBUG] %s(%d) \n", __func__, __LINE__);
+	if (ret < 0)
+		dev_dbg(cod9002x->dev, "[DEBUG] %s(%d)\n", __func__, __LINE__);
+
 	return ret;
 }
 
@@ -2997,14 +3054,15 @@ void cod9002x_call_notifier(int irq1, int irq2, int irq3, int status1)
 {
 	struct cod9002x_priv *cod9002x = codec_notifier_t.cod9002x;
 
-	pr_err("[DEBUG] %s(%d)  0x1: %02x 0x2: %02x 0x3: %02x \n", __func__, __LINE__, irq1, irq2, irq3);
+	dev_dbg(cod9002x->dev, "[DEBUG] %s(%d) 0x1: %02x 0x2: %02x 0x3: %02x\n",
+			__func__, __LINE__, irq1, irq2, irq3);
 
 	cod9002x->irq_val[0] = irq1;
 	cod9002x->irq_val[1] = irq2;
 	cod9002x->irq_val[2] = irq3;
 	cod9002x->irq_val[3] = status1;
 
-	blocking_notifier_call_chain(&cod9002x_notifier,0, &codec_notifier_t);
+	blocking_notifier_call_chain(&cod9002x_notifier, 0, &codec_notifier_t);
 }
 EXPORT_SYMBOL(cod9002x_call_notifier);
 
@@ -3012,10 +3070,8 @@ struct notifier_block codec_notifier;
 
 static int cod9002x_codec_probe(struct snd_soc_codec *codec)
 {
-	int ret;
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
 
-	int temp_irq;
 	dev_dbg(codec->dev, "(*) %s\n", __func__);
 	cod9002x->codec = codec;
 
@@ -3050,11 +3106,25 @@ static int cod9002x_codec_probe(struct snd_soc_codec *codec)
 		return -ENOMEM;
 	}
 
+	INIT_DELAYED_WORK(&cod9002x->water_det_adc_work , cod9002x_water_det_work);
+
+	cod9002x->water_det_adc_wq =
+		create_singlethread_workqueue("water_det_adc_wq");
+	if (cod9002x->water_det_adc_wq == NULL) {
+		dev_err(codec->dev, "Failed to create water_det_adc_wq\n");
+		return -ENOMEM;
+	}
+
+	INIT_DELAYED_WORK(&cod9002x->water_det_polling_work,
+			cod9002x_water_polling_work);
+
 	cod9002x_adc_start(cod9002x);
 
 	cod9002x->aifrate = COD9002X_SAMPLE_RATE_48KHZ;
 
 	cod9002x_i2c_parse_dt(cod9002x);
+
+	cod9002x->jack_det.adc_val = -EINVAL;
 
 	mutex_init(&cod9002x->jackdet_lock);
 	mutex_init(&cod9002x->key_lock);
@@ -3065,52 +3135,20 @@ static int cod9002x_codec_probe(struct snd_soc_codec *codec)
 	 * the interrupt status from mfd.
 	 */
 	codec_notifier.notifier_call = cod9002x_notifier_handler,
-	cod9002x_register_notifier(&codec_notifier, cod9002x);
+		cod9002x_register_notifier(&codec_notifier, cod9002x);
+
+	set_codec_notifier_flag();
 
 	if (cod9002x->update_fw)
 		exynos_regmap_update_fw(COD9002X_FIRMWARE_NAME,
-			codec->dev, cod9002x->regmap, cod9002x->i2c_addr,
-			cod9002x_post_fw_update_success, codec,
-			cod9002x_post_fw_update_failure, codec);
+				codec->dev, cod9002x->regmap, cod9002x->i2c_addr,
+				cod9002x_post_fw_update_success, codec,
+				cod9002x_post_fw_update_failure, codec);
 	else
 		cod9002x_post_fw_update_failure(codec);
 
-	// it should be modify to move machine driver
+	/* it should be modify to move machine driver */
 	cod9002x_jack_mic_register(codec);
-
-	if (cod9002x->int_gpio > 0 ) {
-		dev_err(codec->dev, "[DEBUG]%s : int_gpio %d\n",
-					__func__, (int)cod9002x->int_gpio);
-		ret = gpio_request(cod9002x->int_gpio, "cod9002x_irq");
-		if (ret < 0) {
-			dev_err(codec->dev, "%s : Request for %d GPIO failed\n",
-					__func__, (int)cod9002x->int_gpio);
-		}
-
-		ret = gpio_direction_input(cod9002x->int_gpio);
-		if (ret < 0) {
-			dev_err(codec->dev,
-			"Setting 9002 interrupt GPIO direction to input :failed\n");
-		}
-		temp_irq = gpio_to_irq(cod9002x->int_gpio);
-		dev_err(codec->dev, "[DEBUG]%s : int_gpio %d\n",
-					__func__, (int)temp_irq);
-		ret = request_threaded_irq(
-				temp_irq,
-				NULL, cod9002x_threaded_isr,
-	IRQF_TRIGGER_LOW | IRQF_SHARED,
-				"cod9002_theaded_isr", cod9002x);
-		if (ret < 0) {
-			dev_err(codec->dev,
-			"Error %d in requesting 9002 interrupt line:%d\n",
-					ret, cod9002x->int_gpio);
-		}
-
-		ret = irq_set_irq_wake(gpio_to_irq(cod9002x->int_gpio), 1);
-		if (ret < 0)
-			dev_err(codec->dev, "cannot set 9002 irq_set_irq_wake\n");
-
-	}
 
 	snd_soc_dapm_ignore_suspend(&codec->dapm, "SPKOUTLN");
 	snd_soc_dapm_ignore_suspend(&codec->dapm, "HPOUTLN");
@@ -3138,19 +3176,21 @@ static int cod9002x_codec_probe(struct snd_soc_codec *codec)
 static int cod9002x_codec_remove(struct snd_soc_codec *codec)
 {
 	struct cod9002x_priv *cod9002x = snd_soc_codec_get_drvdata(codec);
+
 	dev_dbg(codec->dev, "(*) %s called\n", __func__);
 
 	cancel_delayed_work_sync(&cod9002x->key_work);
-	if (cod9002x->int_gpio) {
-		free_irq(gpio_to_irq(cod9002x->int_gpio), cod9002x);
-		gpio_free(cod9002x->int_gpio);
-	}
+
+	if (gpio_is_valid(cod9002x->adc_pin))
+		devm_gpio_free(cod9002x->codec->dev, cod9002x->adc_pin);
 
 	cod9002x_regulators_disable(codec);
 
 	destroy_workqueue(cod9002x->buttons_wq);
-
 	destroy_workqueue(cod9002x->jack_det_wq);
+	destroy_workqueue(cod9002x->water_det_adc_wq);
+
+	cancel_delayed_work(&cod9002x->water_det_polling_work);
 
 	cod9002x_adc_stop(cod9002x);
 
@@ -3170,6 +3210,9 @@ static struct snd_soc_codec_driver soc_codec_dev_cod9002x = {
 	.idle_bias_off = true,
 };
 
+/* To support PBA function test */
+#include "../samsung/jack_cod9002x.c"
+
 static int cod9002x_i2c_probe(struct i2c_client *i2c,
 		const struct i2c_device_id *id)
 {
@@ -3185,12 +3228,16 @@ static int cod9002x_i2c_probe(struct i2c_client *i2c,
 	cod9002x->use_external_jd = false;
 	cod9002x->is_probe_done = false;
 	cod9002x->use_btn_adc_mode = false;
+	cod9002x->use_det_gdet_adc_mode = false;
+	cod9002x->dis_det_surge_mode = false;
+	cod9002x->use_jack_pullup_mode = false;
 
 	cod9002x->regmap = devm_regmap_init_i2c(i2c, &cod9002x_regmap);
 	if (IS_ERR(cod9002x->regmap)) {
 		dev_err(&i2c->dev, "Failed to allocate regmap: %li\n",
 				PTR_ERR(cod9002x->regmap));
-		return PTR_ERR(cod9002x->regmap);
+		ret = -ENOMEM;
+		goto err;
 	}
 
 	regcache_mark_dirty(cod9002x->regmap);
@@ -3198,7 +3245,7 @@ static int cod9002x_i2c_probe(struct i2c_client *i2c,
 	pinctrl = devm_pinctrl_get(&i2c->dev);
 	if (IS_ERR(pinctrl)) {
 		dev_warn(&i2c->dev, "did not get pins for codec: %li\n",
-							PTR_ERR(pinctrl));
+				PTR_ERR(pinctrl));
 	} else {
 		cod9002x->pinctrl = pinctrl;
 	}
@@ -3207,18 +3254,30 @@ static int cod9002x_i2c_probe(struct i2c_client *i2c,
 
 	ret = snd_soc_register_codec(&i2c->dev, &soc_codec_dev_cod9002x,
 			cod9002x_dai, ARRAY_SIZE(cod9002x_dai));
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to register codec: %d\n", ret);
+		goto err;
+	}
 #ifdef CONFIG_PM_RUNTIME
 	pm_runtime_enable(cod9002x->dev);
 #endif
+	/* To support PBA function test */
+	create_jack_devices(cod9002x);
 
+	return ret;
+
+err:
+	kfree(cod9002x);
 	return ret;
 }
 
 static int cod9002x_i2c_remove(struct i2c_client *i2c)
 {
+	struct cod9002x_priv *cod9002x = dev_get_drvdata(&i2c->dev);
+
 	snd_soc_unregister_codec(&i2c->dev);
+	kfree(cod9002x);
+
 	return 0;
 }
 
@@ -3245,7 +3304,6 @@ static int cod9002x_enable(struct device *dev)
 	struct cod9002x_priv *cod9002x = dev_get_drvdata(dev);
 
 	dev_dbg(dev, "(*) %s\n", __func__);
-
 
 	cod9002x_cfg_gpio(dev, "default");
 	cod9002x_regulators_enable(cod9002x->codec);
@@ -3290,8 +3348,6 @@ static int cod9002x_disable(struct device *dev)
 static int cod9002x_sys_suspend(struct device *dev)
 {
 #ifndef CONFIG_PM_RUNTIME
-	//$$$_kjc struct cod9002x_priv *cod9002x = dev_get_drvdata(dev);
-
 	if (is_cp_aud_enabled()) {
 		dev_dbg(dev, "(*)Don't suspend Codec-9002, cp functioning\n");
 		return 0;
@@ -3299,7 +3355,6 @@ static int cod9002x_sys_suspend(struct device *dev)
 	dev_dbg(dev, "(*) %s\n", __func__);
 	cod9002x_disable(dev);
 #endif
-
 	return 0;
 }
 
@@ -3315,7 +3370,6 @@ static int cod9002x_sys_resume(struct device *dev)
 	dev_dbg(dev, "(*) %s\n", __func__);
 	cod9002x_enable(dev);
 #endif
-
 	return 0;
 }
 
@@ -3343,12 +3397,12 @@ static const struct dev_pm_ops cod9002x_pm = {
 	SET_SYSTEM_SLEEP_PM_OPS(
 			cod9002x_sys_suspend,
 			cod9002x_sys_resume
-	)
-	SET_RUNTIME_PM_OPS(
-			cod9002x_runtime_suspend,
-			cod9002x_runtime_resume,
-			NULL
-	)
+			)
+		SET_RUNTIME_PM_OPS(
+				cod9002x_runtime_suspend,
+				cod9002x_runtime_resume,
+				NULL
+				)
 };
 
 static const struct i2c_device_id cod9002x_i2c_id[] = {

@@ -17,6 +17,7 @@ int pmucal_system_enter(int mode)
 	int ret;
 
 	exynos_ss_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
 
 	if (mode >= NUM_SYS_POWERDOWN) {
 		pr_err("%s %s: mode index(%d) is out of supported range (0~%d).\n",
@@ -41,6 +42,7 @@ int pmucal_system_enter(int mode)
 	}
 
 	exynos_ss_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
 
 	return 0;
 }
@@ -58,6 +60,7 @@ int pmucal_system_exit(int mode)
 	int ret;
 
 	exynos_ss_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
 
 	if (mode >= NUM_SYS_POWERDOWN) {
 		pr_err("%s %s: mode index(%d) is out of supported range (0~%d).\n",
@@ -88,6 +91,7 @@ int pmucal_system_exit(int mode)
 	}
 
 	exynos_ss_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
 
 	return 0;
 }
@@ -105,6 +109,7 @@ int pmucal_system_earlywakeup(int mode)
 	int ret;
 
 	exynos_ss_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s+\n", PMUCAL_PREFIX, __func__);
 
 	if (mode >= NUM_SYS_POWERDOWN) {
 		pr_err("%s %s: mode index(%d) is out of supported range (0~%d).\n",
@@ -135,6 +140,7 @@ int pmucal_system_earlywakeup(int mode)
 	}
 
 	exynos_ss_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
+	trace_printk("%s %s-\n", PMUCAL_PREFIX, __func__);
 
 	return 0;
 }

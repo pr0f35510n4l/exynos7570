@@ -15,6 +15,7 @@
 #define S2MPU06_CHARGER_H
 #include <linux/mfd/samsung/s2mpu06.h>
 #include <linux/mfd/samsung/s2mpu06-private.h>
+#include <linux/of_gpio.h>
 
 #define MASK(width, shift)      (((0x1 << (width)) - 1) << shift)
 
@@ -60,6 +61,9 @@
 #define DET_BAT_STATUS_SHIFT	3
 #define DET_BAT_STATUS_MASK	BIT(DET_BAT_STATUS_SHIFT)
 #define CHGVINOVP_STS_SHIFT	6
+
+/* S2MPU06_CHG_STATUS4 */
+#define	CHG_STATUS4_OTGILIM_STS	6
 
 /* S2MPU06_CHG_CTRL1 */
 #define EN_CHG_SHIFT		7

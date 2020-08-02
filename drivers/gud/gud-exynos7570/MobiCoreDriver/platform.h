@@ -88,10 +88,10 @@
 
 /* Set Parameters for Secure OS Boosting */
 #define DEFAULT_LITTLE_CORE		0
-#define DEFAULT_BIG_CORE		4
+#define DEFAULT_BIG_CORE		3
 #define MIGRATE_TARGET_CORE     DEFAULT_BIG_CORE
 
-#define MC_INTR_LOCAL_TIMER            (IRQ_SPI(85) + DEFAULT_BIG_CORE)
+#define MC_INTR_LOCAL_TIMER            (IRQ_SPI(106) + DEFAULT_BIG_CORE)
 
 #define LOCAL_TIMER_PERIOD             50
 

@@ -1700,7 +1700,6 @@ static struct pmucal_seq save_dstop[] = {
 };
 
 static struct pmucal_seq exit_dstop[] = {
-	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PMU_PAD_RETENTION_AUD_OPTION", 0x11C80000, 0x3028, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),
 	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PAD_RETENTION_MMC2_OPTION", 0x11C80000, 0x30C8, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),
 	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PAD_RETENTION_TOP_OPTION", 0x11C80000, 0x3108, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),
 	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PAD_RETENTION_MMC0_OPTION", 0x11C80000, 0x3148, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),
@@ -2191,7 +2190,6 @@ static struct pmucal_seq save_sleep[] = {
 };
 
 static struct pmucal_seq exit_sleep[] = {
-	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PMU_PAD_RETENTION_AUD_OPTION", 0x11C80000, 0x3028, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),
 	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PAD_RETENTION_MMC2_OPTION", 0x11C80000, 0x30C8, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),
 	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PAD_RETENTION_TOP_OPTION", 0x11C80000, 0x3108, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),
 	PMUCAL_SEQ_DESC(PMUCAL_WRITE, "PAD_RETENTION_MMC0_OPTION", 0x11C80000, 0x3148, (0x1 << 28), (0x1 << 28), 0, 0, 0xffffffff, 0),

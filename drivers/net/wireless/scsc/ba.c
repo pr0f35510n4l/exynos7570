@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * Copyright (c) 2012 - 2016 Samsung Electronics Co., Ltd. All rights reserved
+ * Copyright (c) 2012 - 2017 Samsung Electronics Co., Ltd. All rights reserved
  *
  ****************************************************************************/
 
@@ -10,7 +10,10 @@
 #include "mgt.h"
 
 /* Age value for frames in MPDU reorder buffer */
-#define BA_MPDU_FRAME_AGE_TIMEOUT  30 /* 30 milliseconds */
+static int ba_mpdu_reorder_age_timeout = 150; /* 150 milli seconds */
+module_param(ba_mpdu_reorder_age_timeout, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(ba_mpdu_reorder_age_timeout, "Timeout (in ms) before a BA frame in Reorder buffer is passed to upper layers");
+
 #define BA_WINDOW_BOUNDARY 2048
 
 #define SN_TO_INDEX(__ba_session_rx, __sn) (((__sn - __ba_session_rx->start_sn) & 0xFFF) % __ba_session_rx->buffer_size)
@@ -26,6 +29,8 @@
 		__ba_session_rx->occupied_slots--; \
 		__ba_session_rx->buffer[__index].active = false; \
 	}
+
+#define IS_SN_LESS(sn1, sn2) (((sn1 - sn2) & 0xFFF) > BA_WINDOW_BOUNDARY)
 
 void slsi_rx_ba_init(struct slsi_dev *sdev)
 {
@@ -208,6 +213,8 @@ static int ba_consume_frame_or_get_buffer_index(struct net_device *dev, struct s
 				slsi_kfree_skb(frame_desc->signal);
 			}
 		}
+		if (!IS_SN_LESS(sn, ba_session_rx->highest_received_sn))
+			ba_session_rx->highest_received_sn = sn;
 	} else {
 		i = -1;
 		if (!ba_session_rx->trigger_ba_after_ssn) {
@@ -224,8 +231,19 @@ static int ba_consume_frame_or_get_buffer_index(struct net_device *dev, struct s
 				SLSI_NET_DBG1(dev, SLSI_RX_BA, "tdls: forward old frame: sn=%d, expected_sn=%d\n", sn, ba_session_rx->expected_sn);
 				ba_add_frame_to_ba_complete(dev, frame_desc);
 			} else {
-				SLSI_NET_DBG1(dev, SLSI_RX_BA, "old frame, drop: sn=%d, expected_sn=%d\n", sn, ba_session_rx->expected_sn);
-				slsi_kfree_skb(frame_desc->signal);
+				/* this frame is deemed as old. But it may so happen that the reorder process did not wait long
+				 * enough for this frame and moved to new window. So check here that the current frame still lies in
+				 * originators transmit window by comparing it with highest sequence number received from originator.
+				 *
+				 * If it lies in the window pass the frame to next process else discard the frame here.
+				 */
+				if (IS_SN_LESS(ba_session_rx->highest_received_sn, (((sn + ba_session_rx->buffer_size) & 0xFFF) - 1))) {
+					SLSI_NET_DBG4(dev, SLSI_RX_BA, "old frame, but still in window: sn=%d, highest_received_sn=%d\n", sn, ba_session_rx->highest_received_sn);
+					ba_add_frame_to_ba_complete(dev, frame_desc);
+				} else {
+					SLSI_NET_DBG1(dev, SLSI_RX_BA, "old frame, drop: sn=%d, expected_sn=%d\n", sn, ba_session_rx->expected_sn);
+					slsi_kfree_skb(frame_desc->signal);
+				}
 			}
 		}
 	}
@@ -275,7 +293,7 @@ static void slsi_ba_aging_timeout_handler(unsigned long data)
 		/* Check for next hole in the buffer, if hole exists create the timer for next missing frame */
 		if (ba_session_rx->occupied_slots) {
 			SLSI_NET_DBG3(dev, SLSI_RX_BA, "Timer start\n");
-			mod_timer(&ba_session_rx->ba_age_timer, jiffies + msecs_to_jiffies(BA_MPDU_FRAME_AGE_TIMEOUT));
+			mod_timer(&ba_session_rx->ba_age_timer, jiffies + msecs_to_jiffies(ba_mpdu_reorder_age_timeout));
 			ba_session_rx->timer_on = true;
 		}
 		slsi_spinlock_unlock(&ba_session_rx->ba_lock);
@@ -345,7 +363,7 @@ int slsi_ba_process_frame(struct net_device *dev, struct slsi_peer *peer,
 		if (ba_session_rx->occupied_slots) {
 			stop_timer = false;
 			SLSI_NET_DBG4(dev, SLSI_RX_BA, "Timer start\n");
-			mod_timer(&ba_session_rx->ba_age_timer, jiffies + msecs_to_jiffies(BA_MPDU_FRAME_AGE_TIMEOUT));
+			mod_timer(&ba_session_rx->ba_age_timer, jiffies + msecs_to_jiffies(ba_mpdu_reorder_age_timeout));
 			ba_session_rx->timer_on = true;
 		}
 	} else if (!ba_session_rx->occupied_slots) {
@@ -353,7 +371,7 @@ int slsi_ba_process_frame(struct net_device *dev, struct slsi_peer *peer,
 	} else if (stop_timer) {
 		stop_timer = false;
 		SLSI_NET_DBG4(dev, SLSI_RX_BA, "Timer restart\n");
-		mod_timer(&ba_session_rx->ba_age_timer, jiffies + msecs_to_jiffies(BA_MPDU_FRAME_AGE_TIMEOUT));
+		mod_timer(&ba_session_rx->ba_age_timer, jiffies + msecs_to_jiffies(ba_mpdu_reorder_age_timeout));
 		ba_session_rx->timer_on = true;
 	}
 
@@ -512,10 +530,6 @@ void slsi_handle_blockack(struct net_device *dev, struct slsi_peer *peer,
 	u16                       user_priority = (parameter_set >> 2) & 0x000F;
 	u16                       buffer_size   = (parameter_set >> 6) & 0x03FF;
 
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-	struct netdev_vif         *ndev_vif = netdev_priv(dev);
-#endif  /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
-
 	SLSI_UNUSED_PARAMETER(vif);
 	SLSI_UNUSED_PARAMETER(peer_qsta_address);
 
@@ -535,26 +549,6 @@ void slsi_handle_blockack(struct net_device *dev, struct slsi_peer *peer,
 		else
 			peer->qs.tid[user_priority].amsdu_size_in_use = 0;
 #endif
-#ifdef CONFIG_SCSC_WLAN_OXYGEN_ENABLE
-		if (ndev_vif->vif_type == FAPI_VIFTYPE_ADHOC) {
-			switch (reason_code) {
-			case FAPI_REASONCODE_START:
-				slsi_ibss_ampdu_setmode(peer, SLSI_AMPDU_F_CREATED);
-				peer->ba_tx_userpri |= ndev_vif->ibss.ba_tx_userpri;
-				break;
-			case FAPI_REASONCODE_END:
-				slsi_ibss_ampdu_clrmode(peer, SLSI_AMPDU_F_CREATED);
-				peer->ba_tx_userpri &= ndev_vif->ibss.ba_tx_userpri;
-				break;
-			case FAPI_REASONCODE_UNSPECIFIED_REASON:
-				slsi_ibss_ampdu_clrmode(peer, SLSI_AMPDU_F_OPERATIONAL);
-				break;
-			default:
-				SLSI_NET_DBG1(dev, SLSI_MLME, "Unknown blockack_ind reason: %d\n", reason_code);
-				break;
-			}
-		}
-#endif          /* CONFIG_SCSC_WLAN_OXYGEN_ENABLE */
 		break;
 	case FAPI_DIRECTION_RECEIVE:
 		ba_session_rx = peer->ba_session_rx[user_priority];
